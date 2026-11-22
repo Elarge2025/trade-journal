@@ -203,6 +203,42 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .photo-img .ph{padding:40px;color:var(--muted);font-size:12.5px}
 .photo textarea{border:0;border-top:1px solid var(--line);border-radius:0;min-height:140px;font-size:14.5px;line-height:1.7;padding:12px 14px}
 .sheet textarea.inp{overflow:hidden;resize:none}
+/* 서식 있는 글 칸 */
+.rt-wrap{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
+.rt-wrap:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.rt-bar{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:5px 8px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.rt-bar button{border:0;background:transparent;border-radius:6px;min-width:28px;height:26px;padding:0 6px;cursor:pointer;color:var(--muted);font-size:12.5px;font-weight:600}
+.rt-bar button:hover{background:var(--surface);color:var(--fg)}
+.rt-bar .sw{min-width:22px;width:22px;height:22px;border-radius:50%;padding:0;border:2px solid var(--surface)}
+.rt-bar .sep{width:1px;height:18px;background:var(--line-strong);margin:0 4px}
+.rt{min-height:96px;padding:10px 12px;line-height:1.7;font-size:14.5px;outline:none;white-space:pre-wrap;word-break:break-word}
+.rt:empty::before{content:attr(data-placeholder);color:var(--faint);pointer-events:none}
+.photo .rt-wrap{border:0;border-top:1px solid var(--line);border-radius:0;box-shadow:none}
+.photo .rt{min-height:140px;padding:12px 14px}
+/* 사진 위 그림 */
+.mk-wrap{position:relative;display:block;line-height:0}
+.mk-wrap img{display:block;width:100%;height:auto}
+.mk-wrap svg.mk{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.lb-stage .mk-wrap{display:inline-block;margin:auto}
+.lb-stage .mk-wrap img{width:auto;max-width:100%}
+.lb-stage.zoom .mk-wrap img{max-width:none}
+.draw{position:fixed;inset:0;z-index:65;background:#0B0E13;display:flex;flex-direction:column;color:#E6EBF2}
+.draw-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:calc(10px + env(safe-area-inset-top,0px)) max(12px,env(safe-area-inset-right,0px)) 10px max(12px,env(safe-area-inset-left,0px));border-bottom:1px solid rgba(255,255,255,.12)}
+.draw-bar .grp{display:flex;gap:3px;align-items:center;background:rgba(255,255,255,.06);border-radius:9px;padding:3px}
+.draw-bar button{border:0;background:transparent;color:#C9D2DE;border-radius:7px;height:30px;min-width:30px;padding:0 9px;cursor:pointer;font-weight:600;font-size:12.5px}
+.draw-bar button[aria-pressed="true"]{background:#E6EBF2;color:#0B0E13}
+.draw-bar .sw{width:24px;min-width:24px;height:24px;padding:0;border-radius:50%;border:2px solid transparent}
+.draw-bar .sw[aria-pressed="true"]{border-color:#E6EBF2;background-clip:padding-box;outline:2px solid #0B0E13;outline-offset:-4px}
+.draw-bar .grow{margin-left:auto}
+.draw-bar .done{background:#86B4F2;color:#0B0E13}
+.draw-stage{flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:12px}
+.draw-stage .mk-wrap{display:inline-block}
+.draw-stage .mk-wrap img{width:auto;max-width:100%;max-height:calc(100vh - 140px);user-select:none;-webkit-user-drag:none}
+.draw-stage svg.mk{pointer-events:auto;touch-action:none;cursor:crosshair}
+.draw-stage svg.mk.erase{cursor:pointer}
+.draw-txt{position:absolute;z-index:2;min-width:120px;font:700 16px var(--font-body);padding:4px 6px;border-radius:6px;border:2px solid #86B4F2;background:rgba(11,14,19,.85);color:#fff;line-height:1.3}
+.draw-hint{font-size:12px;color:#97A2B3;padding:0 16px 10px;text-align:center}
+
 .icon-btn{border:0;background:transparent;cursor:pointer;color:var(--muted);padding:4px 6px;border-radius:6px;font-size:13px}
 .icon-btn:hover{background:var(--surface-2);color:var(--fg)}
 .uploading{font-size:12.5px;color:var(--accent);padding:8px 0}
@@ -215,6 +251,7 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .lb-stage{flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:0 16px 16px}
 .lb-stage img{max-width:100%;height:auto;cursor:zoom-in;margin:auto}
 .lb-stage.zoom img{max-width:none;cursor:zoom-out}
+.lb-note b,.lb-note strong{color:#fff}
 .lb-note{color:#C9D2DE;padding:12px max(16px,env(safe-area-inset-left,0px)) calc(14px + env(safe-area-inset-bottom,0px));white-space:pre-wrap;max-height:30vh;overflow:auto;border-top:1px solid rgba(255,255,255,.12)}
 .modal-wrap{position:fixed;inset:0;z-index:70;background:rgba(10,14,20,.5);display:flex;align-items:center;justify-content:center;padding:16px}
 .modal{background:var(--surface);border-radius:12px;padding:18px;max-width:380px;width:100%;box-shadow:var(--shadow)}
@@ -696,6 +733,181 @@ function parseNum(v) {
   const n = Number(s); return isFinite(n) ? n : null;
 }
 let sheet = null;
+
+/* ---- 서식 있는 글 (굵게 · 글자색) ---- */
+const RT_COLORS = [["빨강","#E5383B"],["파랑","#2F7BFF"],["주황","#E8890C"],["초록","#1FA35C"]];
+const okColor = c => /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/i.test(String(c || "").trim());
+function plainToHtml(t) { return esc(t || "").replace(/\n/g, "<br>"); }
+function sanitizeHtml(html) {
+  const tpl = document.createElement("template"); tpl.innerHTML = String(html || "");
+  const out = document.createElement("div");
+  const walk = (src, dst) => {
+    for (const n of src.childNodes) {
+      if (n.nodeType === 3) { dst.appendChild(document.createTextNode(n.nodeValue)); continue; }
+      if (n.nodeType !== 1) continue;
+      const tag = n.tagName; let el = null;
+      if (tag === "BR") { dst.appendChild(document.createElement("br")); continue; }
+      if (tag === "B" || tag === "STRONG") el = document.createElement("b");
+      else if (tag === "I" || tag === "EM") el = document.createElement("i");
+      else if (tag === "U") el = document.createElement("u");
+      else if (tag === "DIV" || tag === "P") el = document.createElement("div");
+      else if (tag === "FONT" || tag === "SPAN") {
+        const c = n.getAttribute("color") || n.style.color, fw = n.style.fontWeight;
+        el = document.createElement("span");
+        if (c && okColor(c)) el.style.color = c;
+        if (fw === "bold" || +fw >= 600) el.style.fontWeight = "700";
+        if (!el.getAttribute("style")) el = null;
+      }
+      if (el) { walk(n, el); dst.appendChild(el); } else walk(n, dst);
+    }
+  };
+  walk(tpl.content, out); return out.innerHTML;
+}
+function richOf(html, plain) { return html ? sanitizeHtml(html) : plainToHtml(plain); }
+function readRich(el, obj, key) {
+  if (!el.innerText.trim() && !el.querySelector("img")) { if (el.innerHTML) el.innerHTML = ""; obj[key] = ""; obj[key + "Html"] = ""; return; }
+  obj[key] = el.innerText.replace(/\n{3,}/g, "\n\n").trim(); obj[key + "Html"] = sanitizeHtml(el.innerHTML);
+}
+function rtBox(id, placeholder, html = "", attrs = "") {
+  return `<div class="rt-wrap"><div class="rt-bar" role="toolbar" aria-label="글자 서식">
+      <button type="button" data-rt="bold" title="굵게 (Ctrl+B)"><b>B</b></button><span class="sep"></span>
+      ${RT_COLORS.map(([n,c]) => `<button type="button" class="sw" data-rt="color" data-c="${c}" title="${n}" aria-label="${n} 글자" style="background:${c}"></button>`).join("")}
+      <span class="sep"></span><button type="button" data-rt="clear" title="서식 지우기">서식 지우기</button></div>
+    <div class="rt" contenteditable="true" ${id ? `id="${id}"` : ""} ${attrs} data-placeholder="${esc(placeholder)}">${html}</div></div>`;
+}
+document.addEventListener("mousedown", e => { if (e.target.closest(".rt-bar button")) e.preventDefault(); });
+document.addEventListener("click", e => {
+  const b = e.target.closest(".rt-bar button"); if (!b) return;
+  const ed = b.closest(".rt-wrap").querySelector(".rt");
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !ed.contains(sel.anchorNode)) { ed.focus(); }
+  try { document.execCommand("styleWithCSS", false, true); } catch {}
+  if (b.dataset.rt === "bold") document.execCommand("bold");
+  if (b.dataset.rt === "color") document.execCommand("foreColor", false, b.dataset.c);
+  if (b.dataset.rt === "clear") document.execCommand("removeFormat");
+  ed.dispatchEvent(new Event("input", { bubbles: true }));
+});
+document.addEventListener("paste", e => {
+  const ed = e.target.closest?.(".rt"); if (!ed) return;
+  const hasFile = [...(e.clipboardData?.items || [])].some(i => i.kind === "file");
+  if (hasFile) return;
+  e.preventDefault();
+  document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+}, true);
+
+/* ---- 사진 위 그림 ---- */
+const MK_COLORS = [["빨강","#FF3B30"],["파랑","#2F7BFF"],["노랑","#FFD60A"],["초록","#30D158"],["흰색","#FFFFFF"],["검정","#111111"]];
+const MK_WIDTH = { 1: 0.0025, 2: 0.0042, 3: 0.007 };
+const MK_FONT = { 1: 0.022, 2: 0.03, 3: 0.044 };
+const r4 = v => Math.round(v * 10000) / 10000;
+function marksSvg(marks, W, H, hit) {
+  return (marks || []).map((m, k) => {
+    const c = okColor(m.c) ? m.c : "#FF3B30", sw = (m.w || 0.004) * W;
+    const X = v => v * W, Y = v => v * H;
+    const hw = hit ? `stroke="transparent" stroke-width="${Math.max(sw, 0.018 * W)}" fill="none"` : "";
+    let shape = "";
+    if (m.t === "rect" || m.t === "ellipse") {
+      const x = Math.min(m.x1, m.x2), y = Math.min(m.y1, m.y2), w = Math.abs(m.x2 - m.x1), h = Math.abs(m.y2 - m.y1);
+      shape = m.t === "rect"
+        ? `<rect x="${X(x)}" y="${Y(y)}" width="${X(w)}" height="${Y(h)}" rx="${sw}" ATTR/>`
+        : `<ellipse cx="${X(x + w/2)}" cy="${Y(y + h/2)}" rx="${X(w/2)}" ry="${Y(h/2)}" ATTR/>`;
+    } else if (m.t === "line" || m.t === "arrow") {
+      const x1 = X(m.x1), y1 = Y(m.y1), x2 = X(m.x2), y2 = Y(m.y2);
+      shape = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke-linecap="round" ATTR/>`;
+      if (m.t === "arrow" && !hit) {
+        const a = Math.atan2(y2 - y1, x2 - x1), L = Math.max(sw * 4.5, 0.018 * W), sp = 0.45;
+        const p1 = [x2 - L * Math.cos(a - sp), y2 - L * Math.sin(a - sp)], p2 = [x2 - L * Math.cos(a + sp), y2 - L * Math.sin(a + sp)];
+        shape += `<polygon points="${x2},${y2} ${p1} ${p2}" fill="${c}" stroke="${c}" stroke-width="${sw}" stroke-linejoin="round"/>`;
+      }
+    } else if (m.t === "pen") {
+      shape = `<polyline points="${(m.pts || []).map(([x, y]) => X(x) + "," + Y(y)).join(" ")}" stroke-linecap="round" stroke-linejoin="round" ATTR/>`;
+    } else if (m.t === "text") {
+      const fs = (m.fs || 0.03) * W, dark = ["#111111", "#2F7BFF"].includes(m.c);
+      return `<text data-k="${k}" x="${X(m.x1)}" y="${Y(m.y1)}" font-size="${fs}" font-weight="700" font-family="IBM Plex Sans KR, Malgun Gothic, sans-serif" dominant-baseline="hanging" fill="${c}" stroke="${dark ? "#FFFFFF" : "#000000"}" stroke-width="${fs * 0.14}" paint-order="stroke" stroke-linejoin="round">${esc(m.s)}</text>`;
+    }
+    const vis = shape.replace(/ATTR/g, `fill="none" stroke="${c}" stroke-width="${sw}"`);
+    return hit ? `<g data-k="${k}">${vis}${shape.replace(/ATTR/g, hw).replace(/<polygon[^>]*>/g, "")}</g>` : vis;
+  }).join("");
+}
+function bindMarks(img, svg, marks) {
+  if (!img || !svg) return;
+  const go = () => { if (!img.naturalWidth) return; svg.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`); svg.innerHTML = marksSvg(marks, img.naturalWidth, img.naturalHeight); };
+  img.addEventListener("load", go); if (img.complete) go();
+}
+function drawEditor(photo, onDone) {
+  let marks = JSON.parse(JSON.stringify(photo.marks || []));
+  let tool = "rect", color = "#FF3B30", size = 2, cur = null, W = 0, H = 0;
+  const w = document.createElement("div"); w.className = "draw"; w.setAttribute("role", "dialog"); w.setAttribute("aria-label", "사진에 그리기");
+  const TOOLS = [["rect","□ 네모"],["ellipse","○ 동그라미"],["arrow","↗ 화살표"],["line","─ 선"],["pen","✎ 펜"],["text","T 글씨"],["erase","지우개"]];
+  w.innerHTML = `<div class="draw-bar">
+      <div class="grp" data-g="tool">${TOOLS.map(([v,l]) => `<button type="button" data-tool="${v}" aria-pressed="${v===tool}">${l}</button>`).join("")}</div>
+      <div class="grp" data-g="color">${MK_COLORS.map(([n,c]) => `<button type="button" class="sw" data-color="${c}" aria-pressed="${c===color}" title="${n}" aria-label="${n}" style="background:${c}"></button>`).join("")}</div>
+      <div class="grp" data-g="size">${[[1,"얇게"],[2,"보통"],[3,"굵게"]].map(([v,l]) => `<button type="button" data-size="${v}" aria-pressed="${v===size}">${l}</button>`).join("")}</div>
+      <div class="grp"><button type="button" data-a="undo" title="되돌리기 (Ctrl+Z)">↶ 되돌리기</button><button type="button" data-a="clear">전체 지우기</button></div>
+      <span class="grow"></span>
+      <button type="button" data-a="cancel">취소</button><button type="button" class="done" data-a="done">완료</button></div>
+    <div class="draw-stage"><span class="mk-wrap"><img data-path="${esc(photo.asset)}" alt="${esc(photo.title)}" draggable="false"><svg class="mk"></svg></span></div>
+    <div class="draw-hint">끌어서 그리고, 글씨는 원하는 곳을 눌러 입력해요. 완료 후 복기 창의 <b>저장</b>을 눌러야 반영돼요.</div>`;
+  document.body.appendChild(w);
+  const img = w.querySelector("img"), svg = w.querySelector("svg.mk"), wrap = w.querySelector(".mk-wrap");
+  const paint = () => { if (!W) return; svg.innerHTML = marksSvg(cur ? [...marks, cur] : marks, W, H, tool === "erase"); svg.classList.toggle("erase", tool === "erase"); };
+  img.addEventListener("load", () => { W = img.naturalWidth; H = img.naturalHeight; svg.setAttribute("viewBox", `0 0 ${W} ${H}`); paint(); });
+  fillImages(w);
+  const pt = e => { const r = svg.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))]; };
+  const pressed = (g, attr, v) => w.querySelectorAll(`[data-g="${g}"] button`).forEach(b => b.setAttribute("aria-pressed", String(b.dataset[attr]) === String(v)));
+  let txt = null;
+  const commitText = () => {
+    if (!txt) return; const v = txt.el.value.trim();
+    if (v) marks.push({ t: "text", x1: r4(txt.x), y1: r4(txt.y), s: v.slice(0, 200), c: color, fs: MK_FONT[size] });
+    txt.el.remove(); txt = null; paint();
+  };
+  svg.addEventListener("pointerdown", e => {
+    if (!W) return; e.preventDefault();
+    if (txt) { commitText(); return; }
+    const [x, y] = pt(e);
+    if (tool === "erase") { const g = e.target.closest("[data-k]"); if (g) { marks.splice(+g.dataset.k, 1); paint(); } return; }
+    if (tool === "text") {
+      const r = svg.getBoundingClientRect(), el = document.createElement("input");
+      el.className = "draw-txt"; el.placeholder = "글씨 입력 후 Enter";
+      el.style.left = (x * r.width) + "px"; el.style.top = (y * r.height) + "px"; el.style.color = color;
+      wrap.appendChild(el); txt = { el, x, y };
+      el.addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); commitText(); } if (ev.key === "Escape") { ev.stopPropagation(); el.remove(); txt = null; } });
+      setTimeout(() => el.focus(), 0); return;
+    }
+    svg.setPointerCapture(e.pointerId);
+    cur = tool === "pen" ? { t: "pen", pts: [[r4(x), r4(y)]], c: color, w: MK_WIDTH[size] } : { t: tool, x1: r4(x), y1: r4(y), x2: r4(x), y2: r4(y), c: color, w: MK_WIDTH[size] };
+    paint();
+  });
+  svg.addEventListener("pointermove", e => {
+    if (!cur) return; const [x, y] = pt(e);
+    if (cur.t === "pen") { const l = cur.pts[cur.pts.length - 1]; if (Math.hypot(x - l[0], y - l[1]) > 0.002) cur.pts.push([r4(x), r4(y)]); }
+    else { cur.x2 = r4(x); cur.y2 = r4(y); }
+    paint();
+  });
+  const end = () => {
+    if (!cur) return;
+    const big = cur.t === "pen" ? cur.pts.length > 1 : Math.hypot(cur.x2 - cur.x1, cur.y2 - cur.y1) > 0.008;
+    if (big) marks.push(cur); cur = null; paint();
+  };
+  svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
+  const close = () => { w.remove(); document.removeEventListener("keydown", key, true); };
+  const key = e => {
+    if (txt) return;
+    if (e.key === "Escape") { e.stopPropagation(); close(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); marks.pop(); paint(); }
+  };
+  document.addEventListener("keydown", key, true);
+  w.querySelector(".draw-bar").addEventListener("click", async e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.tool) { commitText(); tool = b.dataset.tool; pressed("tool", "tool", tool); paint(); }
+    if (b.dataset.color) { color = b.dataset.color; pressed("color", "color", color); if (txt) txt.el.style.color = color; }
+    if (b.dataset.size) { size = +b.dataset.size; pressed("size", "size", size); }
+    if (b.dataset.a === "undo") { marks.pop(); paint(); }
+    if (b.dataset.a === "clear" && marks.length && await confirmBox("전체 지우기", "이 사진에 그린 것을 모두 지울까요?", "지우기")) { marks = []; paint(); }
+    if (b.dataset.a === "cancel") close();
+    if (b.dataset.a === "done") { commitText(); photo.marks = marks; close(); onDone && onDone(); toast("그림을 넣었어요. 저장을 눌러 주세요"); }
+  });
+}
 function autosize(el) { if (!el || el.tagName !== "TEXTAREA") return; el.style.height = "auto"; el.style.height = (el.scrollHeight + 2) + "px"; }
 function autosizeAll(root) { root?.querySelectorAll("textarea.inp").forEach(autosize); }
 document.addEventListener("input", e => { if (e.target.closest?.(".sheet")) autosize(e.target); });
@@ -724,7 +936,7 @@ function openTrade(id) {
           <label class="f"><span>평균매도가</span><input class="inp num" id="t-sell" inputmode="decimal" placeholder="장 끝나고 채워요"></label>
           <label class="f"><span>수량</span><input class="inp num" id="t-qty" inputmode="numeric"></label>
           <label class="f"><span>계획손절가</span><input class="inp num" id="t-stop" inputmode="decimal" placeholder="매수 전에 정한 값"></label>
-          <label class="f s4"><span>진입근거 (매수 전에 적기)</span><textarea class="inp" id="t-reason" placeholder="왜 사는지. 재료, 거래대금, 주도주 여부, 보고 있는 자리"></textarea></label>
+          <div class="f s4"><span style="font-size:12px;color:var(--muted);font-weight:600">진입근거 (매수 전에 적기)</span>${rtBox("t-reason", "왜 사는지. 재료, 거래대금, 주도주 여부, 보고 있는 자리")}</div>
         </div>
         <div style="display:flex;gap:16px;flex-wrap:wrap">
           <div class="f"><span style="font-size:12px;color:var(--muted);font-weight:600">시장분위기</span><div class="seg" id="t-mood"></div></div>
@@ -744,15 +956,15 @@ function openTrade(id) {
         </div>
       </section>
       <section class="card" style="display:flex;flex-direction:column;gap:12px">
-        <label class="f"><span>복기 메모</span><textarea class="inp" id="t-memo" placeholder="잘한 점 · 고칠 점. 결과를 알고 본 이상적 타점 말고, 당시 가능했던 판단 기준으로"></textarea></label>
+        <div class="f"><span style="font-size:12px;color:var(--muted);font-weight:600">복기 메모</span>${rtBox("t-memo", "잘한 점 · 고칠 점. 결과를 알고 본 이상적 타점 말고, 당시 가능했던 판단 기준으로")}</div>
         <label class="f"><span>교훈 한 줄</span><input class="inp" id="t-lesson" placeholder="다음에 똑같은 자리가 오면 이렇게 한다"></label>
       </section>
     </div>
   </aside>`;
   const d = draft;
-  $("#t-date").value = d.date || ""; $("#t-name").value = d.name || ""; $("#t-reason").value = d.reason || "";
+  $("#t-date").value = d.date || ""; $("#t-name").value = d.name || ""; $("#t-reason").innerHTML = richOf(d.reasonHtml, d.reason);
   $("#t-buy").value = d.buy ?? ""; $("#t-sell").value = d.sell ?? ""; $("#t-qty").value = d.qty ?? ""; $("#t-stop").value = d.stop ?? "";
-  $("#t-memo").value = d.memo || ""; $("#t-lesson").value = d.lesson || "";
+  $("#t-memo").innerHTML = richOf(d.memoHtml, d.memo); $("#t-lesson").value = d.lesson || "";
   const types = [...new Set([...state.cfg.types, d.type].filter(Boolean))];
   $("#t-type").innerHTML = `<option value="">선택</option>` + types.map(x => `<option ${x===d.type?"selected":""}>${esc(x)}</option>`).join("");
   const seg = (el, opts, key) => {
@@ -767,7 +979,7 @@ function openTrade(id) {
   const sync = () => {
     d.date = $("#t-date").value; d.name = $("#t-name").value.trim(); d.type = $("#t-type").value;
     d.buy = parseNum($("#t-buy").value); d.sell = parseNum($("#t-sell").value); d.qty = parseNum($("#t-qty").value); d.stop = parseNum($("#t-stop").value);
-    d.reason = $("#t-reason").value; d.memo = $("#t-memo").value; d.lesson = $("#t-lesson").value;
+    readRich($("#t-reason"), d, "reason"); readRich($("#t-memo"), d, "memo"); d.lesson = $("#t-lesson").value;
     $("#sh-title").textContent = (d.name || "새 매매") + (d.date ? "  ·  " + d.date : "");
     const c = calc(d);
     const risk = (d.buy > 0 && d.stop > 0 && d.stop < d.buy && d.qty > 0) ? (d.buy - d.stop) * d.qty : null;
@@ -801,7 +1013,7 @@ document.addEventListener("paste", e => {
   const files = [...(e.clipboardData?.items || [])].filter(i => i.kind === "file" && i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean);
   if (files.length) { e.preventDefault(); addFiles(files); }
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape" && sheet && !document.querySelector(".lightbox,.modal-wrap")) closeTrade(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && sheet && !document.querySelector(".lightbox,.modal-wrap,.draw")) closeTrade(); });
 
 async function shrink(file) {
   if (file.size <= 6 * 1024 * 1024 || file.type === "image/gif") return file;
@@ -824,7 +1036,7 @@ async function addFiles(files) {
       const path = await api.upload(blob, type);
       if (sheet !== s) { try { await api.removeImages([path]); } catch {} continue; }
       const i = s.draft.photos.length, p = PHOTO_PROMPTS[i];
-      s.draft.photos.push({ asset: path, title: p ? p.title : `사진 ${i+1}`, note: "" });
+      s.draft.photos.push({ asset: path, title: p ? p.title : `사진 ${i+1}`, note: "", noteHtml: "", marks: [] });
       s.added.add(path); renderPhotos();
     } catch (err) {
       toast(/size|large|exceed/i.test(err?.message || "") ? "사진이 너무 커요" : "사진을 올리지 못했어요. 다시 시도해 주세요");
@@ -843,17 +1055,20 @@ function renderPhotos() {
         <input value="${esc(p.title)}" data-f="title" aria-label="사진 ${i+1} 제목">
         <button class="icon-btn" type="button" data-act="up" ${i===0?"disabled":""} aria-label="위로">↑</button>
         <button class="icon-btn" type="button" data-act="down" ${i===ps.length-1?"disabled":""} aria-label="아래로">↓</button>
+        <button class="icon-btn" type="button" data-act="draw" aria-label="사진에 그리기">✎ 그리기</button>
         <button class="icon-btn" type="button" data-act="rm" aria-label="사진 삭제">삭제</button></div>
-      <button class="photo-img" type="button" data-act="zoom"><img data-path="${esc(p.asset)}" alt="${esc(p.title)} 차트"></button>
-      <textarea class="inp" data-f="note" placeholder="${esc(prompt)}">${esc(p.note)}</textarea>
+      <button class="photo-img" type="button" data-act="zoom"><span class="mk-wrap"><img data-path="${esc(p.asset)}" alt="${esc(p.title)} 차트"><svg class="mk" aria-hidden="true"></svg></span></button>
+      ${rtBox("", prompt, richOf(p.noteHtml, p.note), 'data-f="note"')}
     </article>`;
   }).join("");
   fillImages(box);
-  requestAnimationFrame(() => autosizeAll(box));
-  box.oninput = e => { const a = e.target.closest(".photo"); if (!a) return; const p = sheet.draft.photos[+a.dataset.i]; p[e.target.dataset.f] = e.target.value; };
+  box.querySelectorAll(".photo").forEach(a => bindMarks(a.querySelector("img"), a.querySelector("svg.mk"), ps[+a.dataset.i].marks));
+  box.oninput = e => { const a = e.target.closest(".photo"); if (!a) return; const p = sheet.draft.photos[+a.dataset.i];
+    if (e.target.classList.contains("rt")) readRich(e.target, p, "note"); else if (e.target.dataset.f) p[e.target.dataset.f] = e.target.value; };
   box.onclick = async e => {
     const b = e.target.closest("[data-act]"); if (!b) return; const i = +b.closest(".photo").dataset.i; const arr = sheet.draft.photos;
     if (b.dataset.act === "zoom") return lightbox(arr, i);
+    if (b.dataset.act === "draw") return drawEditor(arr[i], () => renderPhotos());
     if (b.dataset.act === "up" && i > 0) [arr[i-1], arr[i]] = [arr[i], arr[i-1]];
     if (b.dataset.act === "down" && i < arr.length-1) [arr[i+1], arr[i]] = [arr[i], arr[i+1]];
     if (b.dataset.act === "rm") { if (!await confirmBox("사진 삭제", "이 사진과 설명을 지울까요? 저장하면 완전히 지워져요.")) return; const [p] = arr.splice(i, 1); sheet.removed.add(p.asset); }
@@ -867,16 +1082,16 @@ function lightbox(arr, start) {
     const p = arr[i];
     w.innerHTML = `<div class="lb-bar"><b>${esc(p.title || "사진")} · ${i+1}/${arr.length}</b>
       <button type="button" data-lb="prev" ${i===0?"disabled":""}>이전</button><button type="button" data-lb="next" ${i===arr.length-1?"disabled":""}>다음</button><button type="button" data-lb="x">닫기</button></div>
-      <div class="lb-stage"><img data-path="${esc(p.asset)}" alt="${esc(p.title)}"></div>
-      ${p.note ? `<div class="lb-note">${esc(p.note)}</div>` : ""}`;
-    fillImages(w);
+      <div class="lb-stage"><span class="mk-wrap"><img data-path="${esc(p.asset)}" alt="${esc(p.title)}"><svg class="mk" aria-hidden="true"></svg></span></div>
+      ${(p.note || "").trim() ? `<div class="lb-note">${richOf(p.noteHtml, p.note)}</div>` : ""}`;
+    fillImages(w); bindMarks(w.querySelector(".lb-stage img"), w.querySelector("svg.mk"), p.marks);
   };
   const close = () => { w.remove(); document.removeEventListener("keydown", key); };
   const key = e => { if (e.key === "Escape") close(); if (e.key === "ArrowLeft" && i > 0) { i--; draw(); } if (e.key === "ArrowRight" && i < arr.length-1) { i++; draw(); } };
   w.addEventListener("click", e => {
     const b = e.target.closest("[data-lb]");
     if (b) { if (b.dataset.lb === "x") return close(); if (b.dataset.lb === "prev" && i > 0) i--; if (b.dataset.lb === "next" && i < arr.length-1) i++; return draw(); }
-    if (e.target.tagName === "IMG") e.target.parentElement.classList.toggle("zoom");
+    if (e.target.tagName === "IMG") e.target.closest(".lb-stage").classList.toggle("zoom");
   });
   document.addEventListener("keydown", key); draw(); document.body.appendChild(w);
 }
@@ -894,10 +1109,10 @@ async function saveTrade() {
   const d = s.draft;
   if (!d.name) { toast("종목명을 적어주세요"); $("#t-name").focus(); return; }
   if (!d.date) { toast("날짜를 적어주세요"); return; }
-  const body = { code: d.code || "", broker: d.broker || null, importKey: d.importKey || null, imported: !!d.imported, date: d.date, name: d.name, type: d.type || "", mood: d.mood || "", reason: d.reason || "",
+  const body = { reasonHtml: d.reasonHtml || "", memoHtml: d.memoHtml || "", code: d.code || "", broker: d.broker || null, importKey: d.importKey || null, imported: !!d.imported, date: d.date, name: d.name, type: d.type || "", mood: d.mood || "", reason: d.reason || "",
     buy: d.buy ?? null, sell: d.sell ?? null, qty: d.qty ?? null, stop: d.stop ?? null, stopKept: d.stopKept || "",
     mistakes: d.mistakes || [], memo: d.memo || "", lesson: d.lesson || "",
-    photos: d.photos.map(p => ({ asset: p.asset, title: p.title || "", note: p.note || "" })),
+    photos: d.photos.map(p => ({ asset: p.asset, title: p.title || "", note: p.note || "", noteHtml: p.noteHtml || "", marks: p.marks || [] })),
     createdAt: d.createdAt || Date.now(), updatedAt: Date.now() };
   $("#sh-save").disabled = true;
   try {
