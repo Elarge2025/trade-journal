@@ -198,7 +198,8 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .photo-img{background:var(--surface-2);display:block;width:100%;border:0;padding:0;cursor:zoom-in}
 .photo-img img{display:block;width:100%;height:auto}
 .photo-img .ph{padding:40px;color:var(--muted);font-size:12.5px}
-.photo textarea{border:0;border-top:1px solid var(--line);border-radius:0;min-height:84px}
+.photo textarea{border:0;border-top:1px solid var(--line);border-radius:0;min-height:140px;font-size:14.5px;line-height:1.7;padding:12px 14px}
+.sheet textarea.inp{overflow:hidden;resize:none}
 .icon-btn{border:0;background:transparent;cursor:pointer;color:var(--muted);padding:4px 6px;border-radius:6px;font-size:13px}
 .icon-btn:hover{background:var(--surface-2);color:var(--fg)}
 .uploading{font-size:12.5px;color:var(--accent);padding:8px 0}
@@ -686,6 +687,10 @@ function parseNum(v) {
   const n = Number(s); return isFinite(n) ? n : null;
 }
 let sheet = null;
+function autosize(el) { if (!el || el.tagName !== "TEXTAREA") return; el.style.height = "auto"; el.style.height = (el.scrollHeight + 2) + "px"; }
+function autosizeAll(root) { root?.querySelectorAll("textarea.inp").forEach(autosize); }
+document.addEventListener("input", e => { if (e.target.closest?.(".sheet")) autosize(e.target); });
+window.addEventListener("resize", () => { if (sheet) autosizeAll(document.querySelector(".sheet")); });
 function openTrade(id) {
   const base = id ? state.trades.find(t => t.id === id) : null;
   if (id && !base) { toast("이 매매를 찾을 수 없어요"); return; }
@@ -770,7 +775,7 @@ function openTrade(id) {
   };
   $(".sheet-body").addEventListener("input", sync);
   $("#t-type").addEventListener("change", sync);
-  sync(); renderPhotos();
+  sync(); renderPhotos(); requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
   L.querySelectorAll("[data-close]").forEach(b => b.onclick = closeTrade);
   $("#sh-save").onclick = saveTrade;
   if (base) $("#sh-del").onclick = deleteTrade;
@@ -835,6 +840,7 @@ function renderPhotos() {
     </article>`;
   }).join("");
   fillImages(box);
+  requestAnimationFrame(() => autosizeAll(box));
   box.oninput = e => { const a = e.target.closest(".photo"); if (!a) return; const p = sheet.draft.photos[+a.dataset.i]; p[e.target.dataset.f] = e.target.value; };
   box.onclick = async e => {
     const b = e.target.closest("[data-act]"); if (!b) return; const i = +b.closest(".photo").dataset.i; const arr = sheet.draft.photos;
