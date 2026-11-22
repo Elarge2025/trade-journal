@@ -109,6 +109,9 @@ h3{font-size:14px;margin:0 0 10px;color:var(--muted);font-weight:600;letter-spac
 .chip{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:999px;background:var(--surface-2);color:var(--muted);white-space:nowrap;margin:1px 3px 1px 0}
 .chip.type{background:var(--accent-soft);color:var(--accent);font-weight:600}
 .chip.mis{background:var(--warn-soft);color:var(--warn)}
+.chip.todo{background:transparent;border:1px dashed var(--line-strong);color:var(--faint)}
+.import-sum{display:grid;grid-template-columns:auto auto;gap:6px 16px;margin:12px 0 16px;font-size:13.5px}
+.import-sum dt{color:var(--muted)} .import-sum dd{margin:0;text-align:right;font-weight:600}
 .chips{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 @media (max-width:760px){
   .list-head{display:none}
@@ -221,6 +224,7 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 @media (prefers-reduced-motion:no-preference){.sheet,.scrim{animation:fade .16s ease-out}@keyframes fade{from{opacity:0}}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="config.js"></script>
 </head>
 <body>
@@ -253,6 +257,9 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 
   <!-- 매매기록 -->
   <section id="view-log" data-viewpane="log">
+    <div class="section-head"><h2 class="grow">매매기록</h2>
+      <button class="btn" type="button" id="importBtn">영웅문 내역 가져오기</button>
+      <input type="file" id="importFile" accept=".xlsx,.xls,.csv" multiple hidden></div>
     <div class="strip" id="strip"></div>
     <div class="filters">
       <input type="search" id="fq" placeholder="종목·메모 검색" aria-label="검색">
@@ -260,7 +267,7 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
       <select id="ftype" aria-label="매매유형"></select>
       <select id="fmis" aria-label="실수유형"></select>
       <select id="fres" aria-label="결과">
-        <option value="">승·패 전체</option><option value="win">이긴 매매</option><option value="loss">진 매매</option>
+        <option value="">승·패 전체</option><option value="win">이긴 매매</option><option value="loss">진 매매</option><option value="todo">일지 안 쓴 매매</option>
       </select>
     </div>
     <div id="listWrap"></div>
@@ -357,11 +364,13 @@ function calc(t, cfg = state.cfg) {
   const b = +t.buy, s = +t.sell, q = +t.qty, st = +t.stop;
   if (!(b > 0) || !(s > 0) || !(q > 0)) return null;
   const buyAmt = b*q, sellAmt = s*q;
-  const cost = Math.round(buyAmt*cfg.fee) + Math.round(sellAmt*cfg.fee) + Math.round(sellAmt*cfg.tax);
-  const pnl = sellAmt - buyAmt - cost;
+  const br = t.broker, actual = !!(br && br.buy === t.buy && br.sell === t.sell && br.qty === t.qty);
+  const cost = actual ? br.cost : Math.round(buyAmt*cfg.fee) + Math.round(sellAmt*cfg.fee) + Math.round(sellAmt*cfg.tax);
+  const pnl = actual ? br.pnl : sellAmt - buyAmt - cost;
   const R = (st > 0 && st < b) ? pnl / ((b - st) * q) : null;
-  return { buyAmt, sellAmt, cost, pnl, ret: pnl / buyAmt, R, win: pnl > 0 };
+  return { buyAmt, sellAmt, cost, pnl, ret: pnl / buyAmt, R, win: pnl > 0, actual };
 }
+function hasJournal(t) { return !!((t.reason||"").trim() || (t.memo||"").trim() || (t.lesson||"").trim() || (t.photos||[]).length || (t.mistakes||[]).length); }
 function enriched() {
   return state.trades.map(t => ({ ...t, c: calc(t) }))
     .sort((a,b) => (b.date||"").localeCompare(a.date||"") || (b.createdAt||0) - (a.createdAt||0));
@@ -446,7 +455,7 @@ function renderLog() {
     (!q || [t.name, t.reason, t.memo, t.lesson].join(" ").toLowerCase().includes(q)) &&
     (!fm || (t.date||"").startsWith(fm)) && (!ft || t.type === ft) &&
     (!fx || (fx === "__none" ? !(t.mistakes||[]).length : (t.mistakes||[]).includes(fx))) &&
-    (!fr || (t.c && (fr === "win" ? t.c.win : !t.c.win))));
+    (!fr || (fr === "todo" ? !hasJournal(t) : (t.c && (fr === "win" ? t.c.win : !t.c.win)))));
   const s = summarize(list);
   $("#strip").innerHTML = [
     ["매매 수", `<span class="num">${s.n}</span><span class="muted"> 건</span>`],
@@ -468,7 +477,7 @@ function renderLog() {
     <div class="list-head"><span>날짜</span><span>종목</span><span>유형</span><span>실수</span><span class="rt">순손익</span><span class="rt">R</span><span class="rt">사진</span></div>
     ${list.map(t => `<button class="row ${t.c ? (t.c.win ? "win" : "loss") : ""}" type="button" data-open="${esc(t.id)}" role="listitem">
       <span class="date">${esc(t.date || "날짜 없음")}</span>
-      <span class="name">${esc(t.name || "이름 없음")}${t.c ? "" : ` <span class="chip">미완료</span>`}</span>
+      <span class="name">${esc(t.name || "이름 없음")}${t.c ? "" : ` <span class="chip">미완료</span>`}${hasJournal(t) ? "" : ` <span class="chip todo">일지 없음</span>`}</span>
       <span class="type-cell">${t.type ? `<span class="chip type">${esc(t.type)}</span>` : ""}</span>
       <span class="chips">${(t.mistakes||[]).map(m => `<span class="chip mis">${esc(m)}</span>`).join("") || `<span class="muted" style="font-size:12px">–</span>`}</span>
       <span class="pnl num ${t.c ? cls(t.c.pnl) : ""}">${t.c ? signed(t.c.pnl) : "–"}</span>
@@ -768,7 +777,7 @@ function openTrade(id) {
       <div><small>R배수</small><span class="num ${c.R!=null?cls(c.R):"muted"}">${rfmt(c.R)}</span></div>
       <div><small>매수금액</small><span class="num">${won(c.buyAmt)}</span></div>
       <div><small>매도금액</small><span class="num">${won(c.sellAmt)}</span></div>
-      <div><small>비용 (수수료·세금)</small><span class="num down">-${won(c.cost)}</span></div>`
+      <div><small>비용 (수수료·세금)${c.actual ? " · 영웅문 실제값" : ""}</small><span class="num down">-${won(c.cost)}</span></div>`
       : `<div><small>매수금액</small><span class="num">${d.buy>0&&d.qty>0?won(d.buy*d.qty):"–"}</span></div>
          <div><small>손절 시 예상 손실 (1R)</small><span class="num down">${risk?"-"+won(risk):"–"}</span></div>
          <div><small>순손익</small><span class="muted">매도가를 채우면 계산돼요</span></div>`;
@@ -885,7 +894,7 @@ async function saveTrade() {
   const d = s.draft;
   if (!d.name) { toast("종목명을 적어주세요"); $("#t-name").focus(); return; }
   if (!d.date) { toast("날짜를 적어주세요"); return; }
-  const body = { date: d.date, name: d.name, type: d.type || "", mood: d.mood || "", reason: d.reason || "",
+  const body = { code: d.code || "", broker: d.broker || null, importKey: d.importKey || null, imported: !!d.imported, date: d.date, name: d.name, type: d.type || "", mood: d.mood || "", reason: d.reason || "",
     buy: d.buy ?? null, sell: d.sell ?? null, qty: d.qty ?? null, stop: d.stop ?? null, stopKept: d.stopKept || "",
     mistakes: d.mistakes || [], memo: d.memo || "", lesson: d.lesson || "",
     photos: d.photos.map(p => ({ asset: p.asset, title: p.title || "", note: p.note || "" })),
@@ -911,6 +920,66 @@ function errMsg(err) {
   if (/JWT|auth|401/i.test(err?.message || "")) return "로그인이 만료됐어요. 다시 로그인해 주세요";
   return "저장하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요";
 }
+
+/* ---------- 영웅문 내역 가져오기 ---------- */
+function xnum(v) { if (v == null || v === "") return null; const n = typeof v === "number" ? v : Number(String(v).replace(/[,\s원%]/g, "")); return isFinite(n) ? n : null; }
+function xdate(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "number") { const d = XLSX.SSF.parse_date_code(v); return d ? `${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}` : null; }
+  const m = String(v).match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/); return m ? `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}` : null;
+}
+async function parseHero(file) {
+  const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
+  const hi = rows.findIndex(r => r && r.some(c => String(c ?? "").includes("거래일")) && r.some(c => String(c ?? "").includes("종목명")));
+  if (hi < 0) throw new Error("format");
+  const out = []; let buyOnly = 0;
+  for (const r of rows.slice(hi + 1)) {
+    if (!r) continue; const date = xdate(r[1]); if (!date) continue;
+    const code = String(r[2] ?? "").trim(), name = String(r[3] ?? "").trim();
+    const sq = xnum(r[9]), sa = xnum(r[10]), fee = xnum(r[12]) || 0, pnl = xnum(r[13]);
+    if (!sq || !sa || pnl == null) { buyOnly++; continue; }
+    const buy = Math.round(((sa - fee - pnl) / sq) * 100) / 100, sell = Math.round((sa / sq) * 100) / 100;
+    out.push({ date, code, name, buy, sell, qty: sq,
+      broker: { buy, sell, qty: sq, pnl, cost: Math.round(sa - buy * sq - pnl) },
+      importKey: `${date}|${code}|${sq}|${sa}` });
+  }
+  return { out, buyOnly };
+}
+$("#importBtn").onclick = () => $("#importFile").click();
+$("#importFile").onchange = async e => {
+  const files = [...e.target.files]; e.target.value = ""; if (!files.length) return;
+  let all = [], buyOnly = 0, badFiles = [];
+  for (const f of files) { try { const r = await parseHero(f); all.push(...r.out); buyOnly += r.buyOnly; } catch { badFiles.push(f.name); } }
+  const have = new Set(state.trades.map(t => t.importKey).filter(Boolean)), seen = new Set(); let dup = 0;
+  const fresh = all.filter(t => { if (have.has(t.importKey) || seen.has(t.importKey)) { dup++; return false; } seen.add(t.importKey); return true; });
+  const dates = fresh.map(t => t.date).sort();
+  const w = document.createElement("div"); w.className = "modal-wrap";
+  w.innerHTML = `<div class="modal" role="dialog" aria-modal="true" style="max-width:420px"><h2>영웅문 내역 가져오기</h2>
+    ${badFiles.length ? `<p class="down">읽지 못한 파일: ${esc(badFiles.join(", "))}<br>영웅문 매매 내역(거래일·종목명·매수·매도 칸이 있는 표)을 엑셀로 저장한 파일인지 확인해 주세요.</p>` : ""}
+    <dl class="import-sum">
+      <dt>새로 추가할 매매</dt><dd class="num">${fresh.length}건</dd>
+      ${dates.length ? `<dt>기간</dt><dd class="num">${dates[0]} ~ ${dates[dates.length-1]}</dd>` : ""}
+      <dt>이미 있어서 건너뜀</dt><dd class="num">${dup}건</dd>
+      <dt>매수만 있는 줄 (팔 때 반영)</dt><dd class="num">${buyOnly}줄</dd>
+    </dl>
+    <p>손익은 영웅문이 계산한 실제 금액 그대로 들어가요. 진입근거·사진·실수유형은 나중에 매매를 눌러 채우면 돼요.</p>
+    <div class="acts"><button class="btn" type="button" data-a="no">취소</button><button class="btn primary" type="button" data-a="yes" ${fresh.length ? "" : "disabled"}>${fresh.length}건 가져오기</button></div></div>`;
+  document.body.appendChild(w);
+  w.addEventListener("click", async ev => {
+    if (ev.target === w) return w.remove();
+    const a = ev.target.closest("[data-a]"); if (!a) return;
+    if (a.dataset.a === "no") return w.remove();
+    a.disabled = true; a.textContent = "가져오는 중…";
+    try {
+      const now = Date.now(), uid = api.uid();
+      const rows = fresh.map((t, i) => ({ id: crypto.randomUUID(), user_id: uid, updated_at: new Date().toISOString(),
+        doc: { ...t, type: "", mood: "", reason: "", stop: null, stopKept: "", mistakes: [], memo: "", lesson: "", photos: [], imported: true, createdAt: now + i, updatedAt: now } }));
+      for (let i = 0; i < rows.length; i += 200) { const { error } = await sb.from("trades").insert(rows.slice(i, i + 200)); if (error) throw error; }
+      w.remove(); toast(`${rows.length}건을 가져왔어요`); await refresh();
+    } catch (err) { a.disabled = false; a.textContent = "다시 시도"; toast(errMsg(err)); }
+  });
+};
 
 /* ---------- 이벤트 ---------- */
 $("#newTrade").onclick = () => openTrade(null);
