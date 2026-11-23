@@ -9,7 +9,7 @@ import argparse, datetime as dt, html, json, os, re, sys, time, urllib.error, ur
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 KST = dt.timezone(dt.timedelta(hours=9))
-MAX_ITEMS = 40
+MAX_ITEMS = 60
 MAX_PAGES = 300
 
 
@@ -164,9 +164,6 @@ SOURCES = [
         f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=20&page={page}")), naver_url)),
     ("naver-api", lambda code, page: parse_items(json.loads(fetch(
         f"https://api.stock.naver.com/news/stock/{code}?pageSize=20&page={page}")), naver_url)),
-    ("daum", lambda code, page: parse_items(json.loads(fetch(
-        f"https://finance.daum.net/content/news?page={page}&perPage=20&category=economy&searchType=symbols&keyword=A{code}",
-        referer=f"https://finance.daum.net/quotes/A{code}")), daum_url)),
 ]
 
 
@@ -184,13 +181,13 @@ def probe(code):
 
 _news_cache = {}
 def code_news(code, since):
-    """since(YYYY-MM-DD) 이후 뉴스를 최신순으로. 같은 종목은 한 번만 거슬러 올라감."""
+    """since(YYYY-MM-DD) 이후 뉴스. 네이버는 너무 깊은 페이지를 거부해서, 거기까지 못 가면 reached=False."""
     got = _news_cache.get(code)
-    if got and got["oldest"] <= since:
-        return got["items"], got["src"]
+    if got and (got["oldest"] <= since or not got["reached"]):
+        return got["items"], got["src"], got["oldest"] < since
     items, src, oldest = [], "", "9999"
     for name, fn in SOURCES:
-        items, oldest, ok = [], "9999", False
+        part, ok = [], False
         try:
             for page in range(1, MAX_PAGES + 1):
                 batch = [x for x in fn(code, page) if x["t"]]
@@ -198,18 +195,20 @@ def code_news(code, since):
                     oldest = "0000"  # 끝까지 봤음
                     break
                 ok = True
-                items += batch
+                part += batch
                 oldest = min(oldest, min(x["t"][:10] for x in batch))
                 if oldest < since:
                     break
-                time.sleep(0.25)
+                time.sleep(0.2)
         except Exception as e:
-            print(f"  · {name} 실패: {e}")
+            print(f"  · {name} {len(part) // 20 + 1}쪽에서 멈춤: {e}")
         if ok:
-            src = name
+            items += part
+            src = src or name
+        if oldest < since:
             break
-    _news_cache[code] = {"items": items, "src": src, "oldest": oldest if src else "9999"}
-    return items, src
+    _news_cache[code] = {"items": items, "src": src, "oldest": oldest, "reached": oldest < since}
+    return items, src, oldest < since
 
 
 def prev_trading_day(date, market_dates):
@@ -223,7 +222,8 @@ def prev_trading_day(date, market_dates):
 
 
 def pick(items, frm, to):
-    seen, out = set(), []
+    """기사가 많으면 '전 거래일 장 마감 뒤 ~ 매매일 장중'을 먼저 고르고, 나머지로 채움. 결과는 최신순."""
+    seen, cand = set(), []
     for x in sorted(items, key=lambda x: x["t"], reverse=True):
         if not (frm <= x["t"][:10] <= to):
             continue
@@ -231,8 +231,11 @@ def pick(items, frm, to):
         if k in seen:
             continue
         seen.add(k)
-        out.append(x)
-    return out[:MAX_ITEMS]
+        cand.append(x)
+    core = lambda x: f"{frm} 15:30" <= x["t"] <= f"{to} 15:30"
+    chosen = [x for x in cand if core(x)][:MAX_ITEMS]
+    chosen += [x for x in cand if not core(x)][: MAX_ITEMS - len(chosen)]
+    return sorted(chosen, key=lambda x: x["t"], reverse=True)
 
 
 def run(a):
@@ -242,9 +245,9 @@ def run(a):
         print(f"종목코드: {code or '못 찾음'}")
         probe(code)
         frm = prev_trading_day(date, [])
-        items, src = code_news(code, frm)
+        items, src, reached = code_news(code, frm)
         got = pick(items, frm, date)
-        print(f"{a.test[0]} → 코드 {code} · {frm}~{date} · 출처 {src} · {len(got)}건")
+        print(f"{a.test[0]} → 코드 {code} · {frm}~{date} · 출처 {src} · {len(got)}건" + ("" if reached else " · 이 날짜까지 다 못 거슬러 감"))
         for x in got[:15]:
             print(" ", x["t"], x["press"], x["title"], x["url"])
         return
@@ -290,9 +293,9 @@ def run(a):
             data["status"] = "nocode"
             print(f"- {key}: 종목코드를 못 찾음")
         else:
-            items, src = code_news(code, frm)
+            items, src, reached = code_news(code, frm)
             data["items"], data["src"] = pick(items, frm, date), src
-            data["status"] = "ok" if src else "error"
+            data["status"] = "error" if not src else "ok" if reached else "partial"
             print(f"- {key} ({code}) {frm}~{date}: {len(data['items'])}건 [{src or '실패'}]")
         rows.append({"key": key, "data": data, "updated_at": now.isoformat()})
 
