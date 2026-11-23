@@ -82,3 +82,13 @@ alter table public.fills enable row level security;
 drop policy if exists "own fills" on public.fills;
 create policy "own fills" on public.fills for all to authenticated
   using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- 종목 뉴스 (매매일 전 거래일 ~ 매매일, GitHub Actions가 매시 채움). key = 날짜|종목명
+create table if not exists public.news (
+  key text primary key,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.news enable row level security;
+drop policy if exists "read news" on public.news;
+create policy "read news" on public.news for select to authenticated using (true);

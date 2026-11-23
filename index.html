@@ -239,6 +239,18 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .mkt-flow small{display:block;font-size:11px;color:var(--muted)}
 .mkt-flow .num{font-size:12.5px;font-weight:600}
 .mkt-empty{font-size:12.5px;color:var(--muted)}
+.news-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.news-list li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;padding:6px 0;border-top:1px solid var(--line)}
+.news-list li:first-child{border-top:0}
+.news-list time{font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap;padding-top:1px}
+.news-list a{color:var(--ink);text-decoration:none;font-size:13.5px;line-height:1.45}
+.news-list a:hover{text-decoration:underline}
+.news-list small{grid-column:2;font-size:11.5px;color:var(--faint)}
+.news-list li.after a{color:var(--muted)}
+.news-list li.news-day{display:block;font-size:11.5px;font-weight:700;color:var(--muted);letter-spacing:.03em;padding:8px 0 2px;border-top:0}
+.btn.sm{padding:3px 9px;font-size:12px;font-weight:500;text-decoration:none;color:var(--ink)}
+.news-links{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.news-links a{font-size:12px}
 .calc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 .calc>div{background:var(--surface);padding:8px 12px;min-width:0}
 .calc small{display:block;font-size:11px;color:var(--muted)}
@@ -737,6 +749,56 @@ function marketCard(date) {
   };
   return `<div class="mkt-head"><b>그날 시장</b><span>${esc(date)} · 순매수는 억원</span></div><div class="mkt-grid">${col("kospi","코스피")}${col("kosdaq","코스닥")}</div>`;
 }
+const newsCache = new Map();
+async function getNews(date, name) {
+  const key = date + "|" + name;
+  if (newsCache.has(key)) return newsCache.get(key);
+  let v = null;
+  try { const r = await sb.from("news").select("data").eq("key", key).maybeSingle(); v = r.error ? { error: r.error.message } : r.data ? r.data.data : null; }
+  catch { v = { error: "network" }; }
+  if (v && !v.error) newsCache.set(key, v);
+  return v;
+}
+const ymd = s => s.replace(/-/g, "");
+function prevTradingDay(date) {
+  const ks = [...state.market.keys()].filter(k => k < date).sort(), last = ks[ks.length - 1];
+  if (last && (new Date(date) - new Date(last)) / 864e5 <= 6) return last;
+  const d = new Date(date + "T00:00:00"); do d.setDate(d.getDate() - 1); while (d.getDay() === 0 || d.getDay() === 6);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function newsLinks(date, name, code, from) {
+  const f = from || prevTradingDay(date), q = encodeURIComponent(`"${name}"`);
+  const naver = `https://search.naver.com/search.naver?where=news&query=${q}&sort=1&ds=${f.replace(/-/g, ".")}&de=${date.replace(/-/g, ".")}&nso=so%3Add%2Cp%3Afrom${ymd(f)}to${ymd(date)}`;
+  return `<div class="news-links"><a class="btn sm" href="${naver}" target="_blank" rel="noopener">네이버 뉴스 검색 (${esc(f.slice(5))}~${esc(date.slice(5))})</a>${code ? `<a class="btn sm" href="https://finance.naver.com/item/news.naver?code=${esc(code)}" target="_blank" rel="noopener">네이버 증권 종목 뉴스</a>` : ""}</div>`;
+}
+let newsShown = "";
+async function renderNews(date, name, fx) {
+  const box = $("#sh-news"); if (!box) return;
+  const key = (date || "") + "|" + (name || "");
+  if (key === newsShown) return; newsShown = key;
+  if (!date || !name) { box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b></div><div class="mkt-empty">날짜와 종목명을 넣으면 전 거래일~그날 뉴스가 나와요.</div>`; return; }
+  box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b><span>${esc(name)} · 불러오는 중…</span></div>`;
+  const v = await getNews(date, name);
+  if (newsShown !== key || !$("#sh-news")) return;
+  const code = v?.code || "";
+  if (!v || v.error || !v.items) {
+    const why = v?.error ? (/news/.test(v.error) && /exist|find|relation/i.test(v.error) ? "Supabase에 news 표를 먼저 만들어 주세요 (setup.sql 맨 아래)." : "뉴스를 불러오지 못했어요.")
+      : "아직 안 가져왔어요. 저장해 두면 매시 10분쯤 자동으로 채워져요. 그 전엔 아래 링크로 보세요.";
+    box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b><span>${esc(name)}</span></div><div class="mkt-empty">${why}</div>${newsLinks(date, name, code)}`; return;
+  }
+  if (v.status === "nocode") { box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b><span>${esc(name)}</span></div><div class="mkt-empty">종목명으로 종목코드를 못 찾았어요. 종목명이 영웅문 표기와 같은지 확인해 주세요.</div>${newsLinks(date, name, "")}`; return; }
+  const entry = fx?.entryTime ? date + " " + fx.entryTime.slice(0, 5) : null;
+  const tag = x => entry && x.t > entry ? "진입 후" : x.t.slice(0, 10) === date && x.t.slice(11) > "15:30" ? "장 마감 후" : "";
+  const items = v.items || [], N = 8;
+  let lastDay = "";
+  const li = (x, i) => { const day = x.t.slice(0, 10), head = day !== lastDay ? `<li class="news-day">${day === date ? "매매일" : day === v.from ? "전 거래일" : "휴장일"} · ${esc(day)}</li>` : ""; lastDay = day; const tg = tag(x);
+    return `${head}<li class="${tg ? "after" : ""}" ${i >= N ? "data-more hidden" : ""}><time>${esc(x.t.slice(11))}</time><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a><small>${esc(x.press)}${tg ? " · " + tg : ""}</small></li>`; };
+  box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b><span>${esc(name)}${code ? " " + esc(code) : ""} · ${esc(v.from.slice(5))} ~ ${esc(date.slice(5))} · ${items.length}건${entry ? " · 흐린 글씨는 진입 뒤에 나온 기사" : ""}</span></div>
+    ${items.length ? `<ul class="news-list">${items.map(li).join("")}</ul>${items.length > N ? `<button class="btn sm" type="button" id="news-more" style="margin-top:6px">${items.length - N}건 더 보기</button>` : ""}` : `<div class="mkt-empty">이 기간에 네이버 증권에 올라온 종목 뉴스가 없어요.</div>`}
+    ${newsLinks(date, name, code, v.from)}`;
+  const mb = $("#news-more"); if (mb) mb.onclick = () => { box.querySelectorAll("[data-more]").forEach(e => e.hidden = false); box.querySelectorAll(".news-day").forEach(e => e.hidden = false); mb.remove(); };
+  box.querySelectorAll(".news-list li[data-more]").forEach(e => { const p = e.previousElementSibling; if (p && p.classList.contains("news-day")) p.hidden = true; });
+}
 function fillsCard(fx, date) {
   const hold = fx.overnight ? `${esc(fx.entryDate)} ${esc(fx.entryTime)} 진입 → 오버나이트` : fx.holdMin != null ? `${Math.round(fx.holdMin)}분 보유` : "진입 체결 없음";
   const tags = [fx.avgDown ? `<span class="chip mis">물타기 ${fx.avgDown}번 (자동 감지)</span>` : "", fx.pyramid ? `<span class="chip type">불타기 ${fx.pyramid}번</span>` : "",
@@ -968,6 +1030,12 @@ async function buildChartPdf(trades, onProgress) {
     const tfx = t.fx || state.fx.get(t.date + "|" + t.name);
     if (tfx) text("체결 · " + tfx.fills.map(f => `${f.date !== t.date ? f.date.slice(5) + " " : ""}${f.time} ${f.side === "buy" ? "매수" : "매도"} ${won(f.price)}×${won(f.qty)}`).join(" / ")
       + (tfx.avgDown ? ` · 물타기 ${tfx.avgDown}번(자동)` : "") + (tfx.pyramid ? ` · 불타기 ${tfx.pyramid}번` : ""), "400", 19, "#5A6577");
+    const nw = t.name && t.date ? await getNews(t.date, t.name) : null;
+    if (nw && nw.items && nw.items.length) {
+      const ent = tfx?.entryTime ? t.date + " " + tfx.entryTime.slice(0, 5) : null;
+      text(`관련 뉴스 (${nw.from.slice(5)}~${t.date.slice(5)}, 최신순 ${Math.min(10, nw.items.length)}/${nw.items.length}건)`, "600", 19, "#5A6577");
+      for (const x of nw.items.slice(0, 10)) text(`· ${x.t.slice(5)} ${x.title} [${x.press}]${ent && x.t > ent ? " (진입 후)" : ""}`, "400", 18, "#5A6577", 1.4);
+    }
     if ((t.reason || "").trim()) { y += 6; text("진입근거: " + t.reason.trim(), "400", 21, "#121821"); }
     y += 10;
     for (const p of t.photos || []) {
@@ -1447,6 +1515,7 @@ function openTrade(id) {
       <button class="btn primary" type="button" id="sh-save">저장</button></div>
     <div class="sheet-body">
       <div class="calc" id="sh-calc"></div>
+      <div class="mkt" id="sh-news"></div>
       <div class="mkt" id="sh-mkt"></div>
       <div class="mkt" id="sh-fills" hidden></div>
       <section class="card" style="display:flex;flex-direction:column;gap:12px">
@@ -1509,6 +1578,7 @@ function openTrade(id) {
     const risk = (d.buy > 0 && d.stop > 0 && d.stop < d.buy && d.qty > 0) ? (d.buy - d.stop) * d.qty : null;
     $("#sh-mkt").innerHTML = marketCard(d.date);
     const fx = state.fx.get(d.date + "|" + d.name), fb = $("#sh-fills");
+    renderNews(d.date, d.name, fx);
     fb.hidden = !fx; if (fx) fb.innerHTML = fillsCard(fx, d.date);
     $("#sh-calc").innerHTML = c ? `
       <div><small>순손익</small><span class="num big ${cls(c.pnl)}">${signed(c.pnl)}</span></div>
@@ -1523,7 +1593,7 @@ function openTrade(id) {
   };
   $(".sheet-body").addEventListener("input", sync);
   $("#t-type").addEventListener("change", sync);
-  sync(); renderPhotos(); requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
+  newsShown = ""; sync(); renderPhotos(); requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
   sheet.original = JSON.stringify(draft);  // 처음 화면을 채우며 생긴 형식 차이는 변경으로 치지 않음
   L.querySelectorAll("[data-close]").forEach(b => b.onclick = closeTrade);
   $("#sh-save").onclick = saveTrade;
