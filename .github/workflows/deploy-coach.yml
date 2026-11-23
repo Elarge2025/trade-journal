@@ -18,7 +18,7 @@ jobs:
       - uses: supabase/setup-cli@v1
         if: env.SUPABASE_ACCESS_TOKEN != ''
         with:
-          version: 2.54.11
+          version: latest
       - name: 키 확인
         if: env.SUPABASE_ACCESS_TOKEN == ''
         run: echo "::warning::GitHub Secrets에 SUPABASE_ACCESS_TOKEN이 없어서 배포를 건너뛰어요"

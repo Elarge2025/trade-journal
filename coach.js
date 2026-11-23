@@ -63,7 +63,7 @@
       const g = x.done.filter(t => hasMis(t, "물타기"));
       if (!g.length) return null;
       const s = group(g), share = x.all.lossSum ? s.lossSum / x.all.lossSum : 0;
-      return { tone: "warn", w: 9 + share * 10, title: "물타기가 계좌를 갉아먹고 있어요",
+      return { tone: "warn", w: (s.pnl < 0 ? 9 : 5) + share * 10, title: s.pnl < 0 ? "물타기가 계좌를 갉아먹고 있어요" : "물타기가 지금은 운 좋게 버텨 주고 있어요",
         mine: `물타기 ${g.length}번, 그 매매들 순손익 ${won(s.pnl)}. 전체 손실의 ${pct(share)}가 여기서 나왔어요.`,
         principle: "평단을 낮추려는 물타기는 손익비를 망가뜨리는 최악의 습관입니다. 반등 없이 흘러내리면 계좌가 박살나요. 추세가 꺾이면 바로 손절하고, 손절 기회를 놓쳤더라도 평단 낮추기 없이 반등 때 물량을 정리해 주세요.",
         src: [SRC.qa5] };
