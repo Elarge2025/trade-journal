@@ -10,7 +10,7 @@ import argparse, datetime as dt, html, json, os, re, sys, time, urllib.error, ur
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 KST = dt.timezone(dt.timedelta(hours=9))
 MAX_ITEMS = 40
-MAX_PAGES = 80
+MAX_PAGES = 300
 
 
 def fetch(url, enc="utf-8", referer="https://m.stock.naver.com/", tries=3):
@@ -123,17 +123,23 @@ def to_dt(s):
     return f"{d[:4]}-{d[4:6]}-{d[6:8]} {d[8:10]}:{d[10:12]}"
 
 
-def news_mobile(code, page):
-    """네이버 증권 모바일 종목 뉴스 (JSON)."""
-    data = json.loads(fetch(f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=100&page={page}"))
+TITLE_K = ("title", "titleText", "headline")
+TIME_K = ("datetime", "dateTime", "createdAt", "publishedAt", "regDate", "writtenAt", "date", "pubDate")
+PRESS_K = ("officeName", "cpKorName", "cpName", "press", "source", "providerName")
+
+
+def parse_items(data, url_of):
+    """JSON 어디에 있든 '제목 + 시각'이 있는 기사 객체를 모음."""
     items = []
     def walk(o):
         if isinstance(o, dict):
-            if o.get("title") and (o.get("datetime") or o.get("dateTime")) and (o.get("articleId") or o.get("officeId")):
-                oid, aid = o.get("officeId"), o.get("articleId")
-                items.append({"t": to_dt(o.get("datetime") or o.get("dateTime")), "title": html.unescape(re.sub(r"<[^>]+>", "", str(o["title"]))).strip(),
-                              "press": o.get("officeName") or "",
-                              "url": f"https://n.news.naver.com/mnews/article/{oid}/{aid}" if oid and aid else ""})
+            tk = next((k for k in TITLE_K if isinstance(o.get(k), str) and o.get(k).strip()), None)
+            dk = next((k for k in TIME_K if o.get(k)), None)
+            t = to_dt(o.get(dk)) if dk else None
+            if tk and t:
+                items.append({"t": t, "title": html.unescape(re.sub(r"<[^>]+>", "", o[tk])).strip(),
+                              "press": next((str(o[k]) for k in PRESS_K if o.get(k)), ""), "url": url_of(o)})
+                return
             for v in o.values():
                 walk(v)
         elif isinstance(o, list):
@@ -143,22 +149,37 @@ def news_mobile(code, page):
     return items
 
 
-def news_desktop(code, page):
-    """네이버 금융 종목 뉴스 (HTML, 예비용)."""
-    txt = fetch(f"https://finance.naver.com/item/news_news.naver?code={code}&page={page}&sm=title_entity_id.basic&clusterId=",
-                enc="euc-kr", referer=f"https://finance.naver.com/item/news.naver?code={code}")
-    items = []
-    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", txt, re.S):
-        a = re.search(r'<a href="([^"]*article_id=(\d+)[^"]*office_id=(\d+)[^"]*)"[^>]*class="tit"[^>]*>(.*?)</a>', tr, re.S) \
-            or re.search(r'<a href="([^"]*article_id=(\d+)[^"]*office_id=(\d+)[^"]*)"[^>]*>(.*?)</a>', tr, re.S)
-        d = re.search(r'class="date"[^>]*>\s*([\d.:\s]+)<', tr)
-        if not a or not d:
-            continue
-        p = re.search(r'class="info"[^>]*>(.*?)<', tr, re.S)
-        items.append({"t": to_dt(d.group(1)), "title": html.unescape(re.sub(r"<[^>]+>", "", a.group(4))).strip(),
-                      "press": html.unescape(p.group(1)).strip() if p else "",
-                      "url": f"https://n.news.naver.com/mnews/article/{a.group(3)}/{a.group(2)}"})
-    return items
+def naver_url(o):
+    oid, aid = o.get("officeId"), o.get("articleId")
+    return f"https://n.news.naver.com/mnews/article/{oid}/{aid}" if oid and aid else (o.get("url") or o.get("linkUrl") or "")
+
+
+def daum_url(o):
+    nid = o.get("newsId") or o.get("id")
+    return f"https://v.daum.net/v/{nid}" if nid and re.match(r"^\d{10,}$", str(nid)) else (o.get("url") or o.get("linkUrl") or o.get("mobileUrl") or "")
+
+
+SOURCES = [
+    ("naver-m", lambda code, page: parse_items(json.loads(fetch(
+        f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=20&page={page}")), naver_url)),
+    ("naver-api", lambda code, page: parse_items(json.loads(fetch(
+        f"https://api.stock.naver.com/news/stock/{code}?pageSize=20&page={page}")), naver_url)),
+    ("daum", lambda code, page: parse_items(json.loads(fetch(
+        f"https://finance.daum.net/content/news?page={page}&perPage=20&category=economy&searchType=symbols&keyword=A{code}",
+        referer=f"https://finance.daum.net/quotes/A{code}")), daum_url)),
+]
+
+
+def probe(code):
+    """테스트용: 각 출처 첫 페이지 응답을 그대로 보여줌."""
+    for name, fn in SOURCES:
+        try:
+            got = fn(code, 1)
+            print(f"[{name}] {len(got)}건" + (f" · 최신 {got[0]['t']} {got[0]['title'][:40]} [{got[0]['press']}]" if got else ""))
+        except urllib.error.HTTPError as e:
+            print(f"[{name}] HTTP {e.code}: {e.read().decode(errors='replace')[:200]!r}")
+        except Exception as e:
+            print(f"[{name}] 실패: {e!r}"[:300])
 
 
 _news_cache = {}
@@ -168,7 +189,7 @@ def code_news(code, since):
     if got and got["oldest"] <= since:
         return got["items"], got["src"]
     items, src, oldest = [], "", "9999"
-    for name, fn in (("naver-m", news_mobile), ("naver-pc", news_desktop)):
+    for name, fn in SOURCES:
         items, oldest, ok = [], "9999", False
         try:
             for page in range(1, MAX_PAGES + 1):
@@ -218,6 +239,8 @@ def run(a):
     now = dt.datetime.now(KST)
     if a.test:
         code, date = clean_code(a.test[0]) or lookup_code(a.test[0]), a.test[1]
+        print(f"종목코드: {code or '못 찾음'}")
+        probe(code)
         frm = prev_trading_day(date, [])
         items, src = code_news(code, frm)
         got = pick(items, frm, date)
