@@ -95,7 +95,7 @@ h3{font-size:14px;margin:0 0 10px;color:var(--muted);font-weight:600;letter-spac
 
 /* 매매 목록 */
 .list{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-.row{display:grid;grid-template-columns:92px minmax(0,1.3fr) 58px 88px minmax(0,1.5fr) 110px 64px 40px;gap:12px;align-items:center;padding:11px 14px;border-top:1px solid var(--line);cursor:pointer;background:var(--surface);width:100%;text-align:left;border-left:3px solid transparent}
+.row{display:grid;grid-template-columns:92px minmax(0,1.3fr) 58px 88px minmax(0,1.5fr) 110px 64px 40px;gap:12px;align-items:center;padding:11px 14px;border-top:1px solid var(--line);cursor:pointer;background:var(--surface);width:100%;text-align:left;border:0;border-top:1px solid var(--line);border-left:3px solid transparent;font:inherit;color:inherit}
 .row:first-child{border-top:0}
 .row:hover{background:var(--surface-2)}
 .row.win{border-left-color:var(--up)} .row.loss{border-left-color:var(--down)}
@@ -236,10 +236,10 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .rt-bar button:hover{background:var(--surface);color:var(--fg)}
 .rt-bar .sw{min-width:22px;width:22px;height:22px;border-radius:50%;padding:0;border:2px solid var(--surface)}
 .rt-bar .sep{width:1px;height:18px;background:var(--line-strong);margin:0 4px}
-.rt{min-height:96px;padding:10px 12px;line-height:1.7;font-size:14.5px;outline:none;white-space:pre-wrap;word-break:break-word}
-.rt:empty::before{content:attr(data-placeholder);color:var(--faint);pointer-events:none}
+.rte{min-height:96px;padding:10px 12px;line-height:1.7;font-size:14.5px;outline:none;white-space:pre-wrap;word-break:break-word}
+.rte:empty::before{content:attr(data-placeholder);color:var(--faint);pointer-events:none}
 .photo .rt-wrap{border:0;border-top:1px solid var(--line);border-radius:0;box-shadow:none}
-.photo .rt{min-height:140px;padding:12px 14px}
+.photo .rte{min-height:140px;padding:12px 14px}
 /* 사진 위 그림 */
 .mk-wrap{position:relative;display:block;line-height:0}
 .mk-wrap img{display:block;width:100%;height:auto}
@@ -863,12 +863,12 @@ function rtBox(id, placeholder, html = "", attrs = "") {
       <button type="button" data-rt="bold" title="굵게 (Ctrl+B)"><b>B</b></button><span class="sep"></span>
       ${RT_COLORS.map(([n,c]) => `<button type="button" class="sw" data-rt="color" data-c="${c}" title="${n}" aria-label="${n} 글자" style="background:${c}"></button>`).join("")}
       <span class="sep"></span><button type="button" data-rt="clear" title="서식 지우기">서식 지우기</button></div>
-    <div class="rt" contenteditable="true" ${id ? `id="${id}"` : ""} ${attrs} data-placeholder="${esc(placeholder)}">${html}</div></div>`;
+    <div class="rte" contenteditable="true" ${id ? `id="${id}"` : ""} ${attrs} data-placeholder="${esc(placeholder)}">${html}</div></div>`;
 }
 document.addEventListener("mousedown", e => { if (e.target.closest(".rt-bar button")) e.preventDefault(); });
 document.addEventListener("click", e => {
   const b = e.target.closest(".rt-bar button"); if (!b) return;
-  const ed = b.closest(".rt-wrap").querySelector(".rt");
+  const ed = b.closest(".rt-wrap").querySelector(".rte");
   const sel = window.getSelection();
   if (!sel.rangeCount || !ed.contains(sel.anchorNode)) { ed.focus(); }
   try { document.execCommand("styleWithCSS", false, true); } catch {}
@@ -878,7 +878,7 @@ document.addEventListener("click", e => {
   ed.dispatchEvent(new Event("input", { bubbles: true }));
 });
 document.addEventListener("paste", e => {
-  const ed = e.target.closest?.(".rt"); if (!ed) return;
+  const ed = e.target.closest?.(".rte"); if (!ed) return;
   const hasFile = [...(e.clipboardData?.items || [])].some(i => i.kind === "file");
   if (hasFile) return;
   e.preventDefault();
@@ -1159,7 +1159,7 @@ function renderPhotos() {
   fillImages(box);
   box.querySelectorAll(".photo").forEach(a => bindMarks(a.querySelector("img"), a.querySelector("svg.mk"), ps[+a.dataset.i].marks));
   box.oninput = e => { const a = e.target.closest(".photo"); if (!a) return; const p = sheet.draft.photos[+a.dataset.i];
-    if (e.target.classList.contains("rt")) readRich(e.target, p, "note"); else if (e.target.dataset.f) p[e.target.dataset.f] = e.target.value; };
+    if (e.target.classList.contains("rte")) readRich(e.target, p, "note"); else if (e.target.dataset.f) p[e.target.dataset.f] = e.target.value; };
   box.onclick = async e => {
     const b = e.target.closest("[data-act]"); if (!b) return; const i = +b.closest(".photo").dataset.i; const arr = sheet.draft.photos;
     if (b.dataset.act === "zoom") return lightbox(arr, i);
