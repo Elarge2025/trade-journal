@@ -35,6 +35,7 @@ jobs:
           SUPABASE_URL: https://qayneaypdazflrvwcphs.supabase.co
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           TEST: ${{ inputs.test }}
+          PYTHONUNBUFFERED: "1"
         run: |
           if [ -n "$TEST" ]; then python scripts/news.py --test $TEST; exit 0; fi
           python scripts/news.py ${{ inputs.force && '--force' || '' }} ${{ inputs.dry_run && '--dry-run' || '' }}
