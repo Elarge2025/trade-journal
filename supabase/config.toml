@@ -1,0 +1,5 @@
+project_id = "qayneaypdazflrvwcphs"
+
+[functions.coach]
+# 로그인 확인은 함수 안에서 직접 한다 (새 API 키 방식과 호환)
+verify_jwt = false

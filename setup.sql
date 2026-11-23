@@ -57,3 +57,15 @@ create table if not exists public.market_days (
 alter table public.market_days enable row level security;
 drop policy if exists "read market" on public.market_days;
 create policy "read market" on public.market_days for select to authenticated using (true);
+
+-- AI 코치 분석 기록
+create table if not exists public.coach_reports (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  model text, period text, text text not null
+);
+alter table public.coach_reports enable row level security;
+drop policy if exists "own coach" on public.coach_reports;
+create policy "own coach" on public.coach_reports for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
