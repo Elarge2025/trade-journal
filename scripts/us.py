@@ -26,7 +26,7 @@ def yahoo(sym, rng):
     for ts, c in zip(res.get("timestamp") or [], closes):
         if c is None:
             continue
-        out[dt.datetime.utcfromtimestamp(ts + off).date().isoformat()] = round(c, 4)
+        out[dt.datetime.fromtimestamp(ts + off, dt.timezone.utc).date().isoformat()] = round(c, 4)
     name = res["meta"].get("shortName") or res["meta"].get("longName") or ""
     return out, name
 
