@@ -284,7 +284,7 @@ def run(a):
             want[key] = (date, name)
     print(f"매매 {len(trades)}건 · 뉴스 있음 {len(have)} · 이번에 가져올 것 {len(want)}")
 
-    rows = []
+    rows, saved = [], 0
     for key, (date, name) in sorted(want.items(), reverse=True)[: a.limit]:
         code = codes.get(name) or lookup_code(name)
         frm = prev_trading_day(date, market)
@@ -298,13 +298,15 @@ def run(a):
             data["status"] = "error" if not src else "ok" if reached else "partial"
             print(f"- {key} ({code}) {frm}~{date}: {len(data['items'])}건 [{src or '실패'}]")
         rows.append({"key": key, "data": data, "updated_at": now.isoformat()})
+        if not a.dry_run and len(rows) - saved >= 10:  # 10건마다 바로 저장 (중간에 멈춰도 그때까지는 남음)
+            sb_upsert(rows[saved:]); saved = len(rows); print(f"  … {saved}건 저장")
 
     if a.dry_run:
         for r in rows[:3]:
             print(json.dumps(r["data"], ensure_ascii=False)[:600])
         return
-    if rows:
-        sb_upsert(rows)
+    if rows[saved:]:
+        sb_upsert(rows[saved:])
     print(f"저장 완료: {len(rows)}건")
 
 
