@@ -240,12 +240,24 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .mkt-flow .num{font-size:12.5px;font-weight:600}
 .mkt-empty{font-size:12.5px;color:var(--muted)}
 .news-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
-.news-list li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;padding:6px 0;border-top:1px solid var(--line)}
+.news-list li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 10px;padding:6px 0;border-top:1px solid var(--line)}
+.news-list .pin{grid-row:1/3;grid-column:3;align-self:center;border:1px solid var(--line-strong);background:var(--surface);border-radius:999px;font-size:11.5px;padding:2px 9px;cursor:pointer;color:var(--muted);white-space:nowrap}
+.news-list .pin[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.refs{display:flex;flex-direction:column;gap:10px}
+.ref{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:10px 12px;background:var(--surface)}
+.ref a.ref-title{color:var(--ink);font-weight:600;font-size:14px;line-height:1.45;text-decoration:none;word-break:break-all}
+.ref a.ref-title:hover{text-decoration:underline}
+.ref .ref-meta{grid-column:1;font-size:12px;color:var(--faint)}
+.ref .ref-x{grid-row:1;grid-column:2;align-self:start}
+.ref textarea{grid-column:1/3;min-height:38px;resize:vertical;font-size:13px}
+.ref-form{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr) auto;gap:8px}
+@media (max-width:560px){.ref-form{grid-template-columns:minmax(0,1fr)}}
 .news-list li:first-child{border-top:0}
 .news-list time{font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap;padding-top:1px}
 .news-list a{color:var(--ink);text-decoration:none;font-size:13.5px;line-height:1.45}
 .news-list a:hover{text-decoration:underline}
 .news-list small{grid-column:2;font-size:11.5px;color:var(--faint)}
+.news-list li.news-day{grid-template-columns:1fr}
 .news-list li.after a{color:var(--muted)}
 .news-list li.news-day{display:block;font-size:11.5px;font-weight:700;color:var(--muted);letter-spacing:.03em;padding:8px 0 2px;border-top:0}
 .btn.sm{padding:3px 9px;font-size:12px;font-weight:500;text-decoration:none;color:var(--ink)}
@@ -554,7 +566,7 @@ function holdBucket(fx) {
   if (fx.overnight) return "다음 날 이후 (오버나이트)";
   const m = fx.holdMin; return m < 3 ? "3분 미만" : m < 10 ? "3~10분" : m < 30 ? "10~30분" : m < 120 ? "30분~2시간" : "2시간 넘게 (당일)";
 }
-function hasJournal(t) { return !!((t.reason||"").trim() || (t.memo||"").trim() || (t.lesson||"").trim() || (t.photos||[]).length || (t.mistakes||[]).length); }
+function hasJournal(t) { return !!((t.reason||"").trim() || (t.memo||"").trim() || (t.lesson||"").trim() || (t.photos||[]).length || (t.mistakes||[]).length || (t.newsRefs||[]).length); }
 function enriched() {
   return state.trades.map(t => ({ ...t, c: calc(t), fx: state.fx.get(t.date + "|" + t.name) || null }))
     .sort((a,b) => (b.date||"").localeCompare(a.date||"") || (b.createdAt||0) - (a.createdAt||0));
@@ -772,6 +784,44 @@ function newsLinks(date, name, code, from) {
   return `<div class="news-links"><a class="btn sm" href="${naver}" target="_blank" rel="noopener">네이버 뉴스 검색 (${esc(f.slice(5))}~${esc(date.slice(5))})</a>${code ? `<a class="btn sm" href="https://finance.naver.com/item/news.naver?code=${esc(code)}" target="_blank" rel="noopener">네이버 증권 종목 뉴스</a>` : ""}</div>`;
 }
 let newsShown = "";
+let newsItemsShown = [];
+const refKey = r => r.url || r.title;
+function togglePin(x) {
+  if (!sheet) return; const d = sheet.draft; d.newsRefs = d.newsRefs || [];
+  const k = refKey(x), at = d.newsRefs.findIndex(r => refKey(r) === k);
+  if (at >= 0) d.newsRefs.splice(at, 1);
+  else { d.newsRefs.push({ t: x.t || "", title: x.title, press: x.press || "", url: x.url || "", note: "", after: !!x.after }); toast("참고한 뉴스에 붙였어요"); }
+  renderRefs(); syncPins();
+}
+function syncPins() {
+  const refs = new Set((sheet?.draft.newsRefs || []).map(refKey));
+  document.querySelectorAll("#sh-news [data-pin]").forEach(b => { const li = b.closest("li"), a = li.querySelector("a"); const on = refs.has(a.getAttribute("href")) || refs.has(a.textContent); b.setAttribute("aria-pressed", on); b.textContent = on ? "붙임" : "참고"; });
+}
+function renderRefs() {
+  const box = $("#refList"); if (!box || !sheet) return; const refs = sheet.draft.newsRefs || [];
+  box.innerHTML = refs.length ? refs.map((r, i) => `<div class="ref">
+      <a class="ref-title" ${r.url ? `href="${esc(r.url)}" target="_blank" rel="noopener"` : ""}>${esc(r.title)}</a>
+      <button type="button" class="btn sm ref-x" data-unref="${i}">빼기</button>
+      <div class="ref-meta">${[r.press, r.t ? r.t.slice(5) : "", r.after ? "진입 후 기사" : ""].filter(Boolean).map(esc).join(" · ")}</div>
+      <textarea class="inp" data-refnote="${i}" placeholder="이 기사에서 본 것 · 재료의 크기, 처음 나온 재료인지, 시장이 어떻게 반응했는지">${esc(r.note || "")}</textarea></div>`).join("")
+    : `<div class="mkt-empty">위 관련 뉴스에서 '참고'를 누르면 여기에 붙어요. 목록에 없는 기사는 '링크 직접 추가'로 넣으세요.</div>`;
+  box.querySelectorAll("[data-unref]").forEach(b => b.onclick = () => { refs.splice(+b.dataset.unref, 1); renderRefs(); syncPins(); });
+  box.querySelectorAll("[data-refnote]").forEach(t => { t.oninput = () => { refs[+t.dataset.refnote].note = t.value; }; }); autosizeAll(box);
+}
+function refAddForm() {
+  const f = $("#refForm"); if (!f) return; f.hidden = !f.hidden; if (f.hidden) return;
+  f.innerHTML = `<input class="inp" id="rf-url" placeholder="기사 주소 (https://…)" inputmode="url"><input class="inp" id="rf-title" placeholder="기사 제목"><button type="button" class="btn primary" id="rf-ok">붙이기</button>`;
+  $("#rf-url").focus();
+  $("#rf-ok").onclick = () => {
+    const url = $("#rf-url").value.trim(), title = $("#rf-title").value.trim();
+    if (url && !/^https?:\/\//i.test(url)) { toast("주소는 http:// 또는 https://로 시작해야 해요"); return; }
+    if (!url && !title) { toast("주소나 제목을 적어주세요"); return; }
+    let press = ""; try { press = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch {}
+    sheet.draft.newsRefs = sheet.draft.newsRefs || [];
+    sheet.draft.newsRefs.push({ t: "", title: title || url, press, url, note: "", after: false });
+    f.hidden = true; renderRefs(); syncPins();
+  };
+}
 async function renderNews(date, name, fx) {
   const box = $("#sh-news"); if (!box) return;
   const key = (date || "") + "|" + (name || "");
@@ -792,11 +842,13 @@ async function renderNews(date, name, fx) {
   const items = v.items || [], N = 8;
   let lastDay = "";
   const li = (x, i) => { const day = x.t.slice(0, 10), head = day !== lastDay ? `<li class="news-day">${day === date ? "매매일" : day === v.from ? "전 거래일" : "휴장일"} · ${esc(day)}</li>` : ""; lastDay = day; const tg = tag(x);
-    return `${head}<li class="${tg ? "after" : ""}" ${i >= N ? "data-more hidden" : ""}><time>${esc(x.t.slice(11))}</time><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a><small>${esc(x.press)}${tg ? " · " + tg : ""}</small></li>`; };
+    return `${head}<li class="${tg ? "after" : ""}" ${i >= N ? "data-more hidden" : ""}><time>${esc(x.t.slice(11))}</time><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a><button type="button" class="pin" data-pin="${i}" aria-pressed="false" title="참고한 뉴스로 복기에 붙이기">참고</button><small>${esc(x.press)}${tg ? " · " + tg : ""}</small></li>`; };
   box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b><span>${esc(name)}${code ? " " + esc(code) : ""} · ${esc(v.from.slice(5))} ~ ${esc(date.slice(5))} · ${items.length}건${entry ? " · 흐린 글씨는 진입 뒤에 나온 기사" : ""}</span></div>
     ${items.length ? `<ul class="news-list">${items.map(li).join("")}</ul>${items.length > N ? `<button class="btn sm" type="button" id="news-more" style="margin-top:6px">${items.length - N}건 더 보기</button>` : ""}` : `<div class="mkt-empty">${v.status === "empty" ? "네이버 증권 종목 뉴스 목록에 이 종목 기사가 없어요. 신규 상장주나 새 형식 코드(영문 섞인 코드)는 비어 있을 수 있어요. 아래 검색 링크로 보세요." : v.status === "partial" ? "네이버 종목 뉴스 목록이 이 날짜까지 거슬러 올라가지 않아요. 아래 검색 링크로 보세요." : "이 기간에 네이버 증권에 올라온 종목 뉴스가 없어요."}</div>`}
     ${items.length && v.status === "partial" ? `<div class="mkt-empty" style="margin-top:6px">기사가 많은 종목이라 네이버 목록에서 일부만 가져왔어요. 빠진 건 아래 검색 링크로 보세요.</div>` : ""}
     ${newsLinks(date, name, code, v.from)}`;
+  box.querySelectorAll("[data-pin]").forEach(b => b.onclick = () => togglePin({ ...items[+b.dataset.pin], after: !!tag(items[+b.dataset.pin]) }));
+  syncPins();
   const mb = $("#news-more"); if (mb) mb.onclick = () => { box.querySelectorAll("[data-more]").forEach(e => e.hidden = false); box.querySelectorAll(".news-day").forEach(e => e.hidden = false); mb.remove(); };
   box.querySelectorAll(".news-list li[data-more]").forEach(e => { const p = e.previousElementSibling; if (p && p.classList.contains("news-day")) p.hidden = true; });
 }
@@ -903,7 +955,8 @@ function coachPayload(all) {
       (t.mistakes || []).join("/"), t.stopKept || "", t.c.R != null ? +t.c.R.toFixed(2) : "", mk(t.date)?.kosdaq?.chgPct ?? "", mk(t.date)?.kospi?.chgPct ?? "", mk(t.date)?.flow?.kosdaq?.foreign ?? "",
       t.fx?.entryTime || "", t.fx?.exitTime || "", t.fx ? (t.fx.overnight ? -1 : Math.round(t.fx.holdMin ?? 0)) : "", t.fx?.avgDown || ""]),
     복기글: list.filter(hasJournal).slice(-40).map(t => ({ 날짜: t.date, 종목: t.name, 순손익: Math.round(t.c.pnl), 평가: t.grade || "",
-      진입근거: cut(t.reason, 300), 복기메모: cut(t.memo, 400), 교훈: cut(t.lesson, 150), 사진설명: (t.photos || []).map(p => cut(p.note, 250)).filter(Boolean) })),
+      진입근거: cut(t.reason, 300), 복기메모: cut(t.memo, 400), 교훈: cut(t.lesson, 150), 사진설명: (t.photos || []).map(p => cut(p.note, 250)).filter(Boolean),
+      참고뉴스: (t.newsRefs || []).map(r => cut(r.title, 80) + (r.after ? " (진입 후 기사)" : "") + (r.note ? " → " + cut(r.note, 150) : "")) })),
     규칙진단: window.TJCoach ? TJCoach.analyze(list, state.market).items.map(i => ({ 구분: i.tone, 제목: i.title, 근거: i.mine })) : [],
     주간교정: [...state.weeks].sort((a, b) => (a.week||"").localeCompare(b.week||"")).slice(-6).map(w => ({ 주: w.week, 가장비싼실수: w.worst, 목표: w.goal, 지켰나: w.kept }))
   };
@@ -1038,6 +1091,13 @@ async function buildChartPdf(trades, onProgress) {
       for (const x of nw.items.slice(0, 10)) text(`· ${x.t.slice(5)} ${x.title} [${x.press}]${ent && x.t > ent ? " (진입 후)" : ""}`, "400", 18, "#5A6577", 1.4);
     }
     if ((t.reason || "").trim()) { y += 6; text("진입근거: " + t.reason.trim(), "400", 21, "#121821"); }
+    if ((t.newsRefs || []).length) {
+      y += 4; text("참고한 뉴스", "700", 21, "#1C4F8C");
+      for (const r of t.newsRefs) {
+        text(`· ${r.t ? r.t.slice(5) + " " : ""}${r.title}${r.press ? " [" + r.press + "]" : ""}${r.after ? " (진입 후 기사)" : ""}`, "600", 20, "#121821", 1.4);
+        if ((r.note || "").trim()) text("   → " + r.note.trim(), "400", 20, "#121821", 1.5);
+      }
+    }
     y += 10;
     for (const p of t.photos || []) {
       const pc = await photoCanvas(p).catch(() => null);
@@ -1537,6 +1597,11 @@ function openTrade(id) {
         </div>
         <div class="f"><span style="font-size:12px;color:var(--muted);font-weight:600">실수유형 (여러 개 선택 가능)</span><div class="toggles" id="t-mis"></div></div>
       </section>
+      <section style="display:flex;flex-direction:column;gap:10px">
+        <div class="section-head" style="margin:0"><h2 class="grow">참고한 뉴스</h2><button class="btn sm" type="button" id="refAdd">링크 직접 추가</button></div>
+        <div class="ref-form" id="refForm" hidden></div>
+        <div class="refs" id="refList"></div>
+      </section>
       <section style="display:flex;flex-direction:column;gap:12px">
         <div class="section-head" style="margin:0"><h2 class="grow">차트 복기</h2><span class="muted" style="font-size:12.5px">사진 크기 제한 없음 · 눌러서 크게 보기</span></div>
         <div id="photoList" style="display:flex;flex-direction:column;gap:14px"></div>
@@ -1594,7 +1659,7 @@ function openTrade(id) {
   };
   $(".sheet-body").addEventListener("input", sync);
   $("#t-type").addEventListener("change", sync);
-  newsShown = ""; sync(); renderPhotos(); requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
+  newsShown = ""; d.newsRefs = d.newsRefs || []; sync(); renderPhotos(); renderRefs(); $("#refAdd").onclick = refAddForm; requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
   sheet.original = JSON.stringify(draft);  // 처음 화면을 채우며 생긴 형식 차이는 변경으로 치지 않음
   L.querySelectorAll("[data-close]").forEach(b => b.onclick = closeTrade);
   $("#sh-save").onclick = saveTrade;
@@ -1712,6 +1777,7 @@ async function saveTrade() {
   const body = { reasonHtml: d.reasonHtml || "", memoHtml: d.memoHtml || "", code: d.code || "", broker: d.broker || null, importKey: d.importKey || null, imported: !!d.imported, date: d.date, name: d.name, type: d.type || "", mood: d.mood || "", reason: d.reason || "",
     buy: d.buy ?? null, sell: d.sell ?? null, qty: d.qty ?? null, stop: d.stop ?? null, stopKept: d.stopKept || "", grade: d.grade ? +d.grade : null,
     mistakes: d.mistakes || [], memo: d.memo || "", lesson: d.lesson || "",
+    newsRefs: (d.newsRefs || []).map(r => ({ t: r.t || "", title: r.title || "", press: r.press || "", url: r.url || "", note: r.note || "", after: !!r.after })),
     photos: d.photos.map(p => ({ asset: p.asset, title: p.title || "", note: p.note || "", noteHtml: p.noteHtml || "", marks: p.marks || [] })),
     createdAt: d.createdAt || Date.now(), updatedAt: Date.now() };
   $("#sh-save").disabled = true;
