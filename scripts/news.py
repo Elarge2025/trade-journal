@@ -173,6 +173,12 @@ def probe(code):
         try:
             got = fn(code, 1)
             print(f"[{name}] {len(got)}건" + (f" · 최신 {got[0]['t']} {got[0]['title'][:40]} [{got[0]['press']}]" if got else ""))
+            if not got:
+                for u in (f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=20&page=1", f"https://m.stock.naver.com/api/stock/{code}/basic"):
+                    try:
+                        print(f"   원문 {u.split('.com')[1]}: {fetch(u)[:300]!r}")
+                    except Exception as e:
+                        print(f"   원문 {u.split('.com')[1]}: {e}")
         except urllib.error.HTTPError as e:
             print(f"[{name}] HTTP {e.code}: {e.read().decode(errors='replace')[:200]!r}")
         except Exception as e:
@@ -187,12 +193,14 @@ def code_news(code, since):
         return got["items"], got["src"], got["oldest"] < since
     items, src, oldest = [], "", "9999"
     for name, fn in SOURCES:
-        part, ok = [], False
+        part, ok, prev = [], False, oldest
         try:
             for page in range(1, MAX_PAGES + 1):
                 batch = [x for x in fn(code, page) if x["t"]]
                 if not batch:
                     oldest = "0000"  # 끝까지 봤음
+                    if page == 1:
+                        ok = "empty"
                     break
                 ok = True
                 part += batch
@@ -202,6 +210,11 @@ def code_news(code, since):
                 time.sleep(0.2)
         except Exception as e:
             print(f"  · {name} {len(part) // 20 + 1}쪽에서 멈춤: {e}")
+        if ok == "empty":
+            if name == SOURCES[-1][0] and not src:
+                src = name + ":empty"
+            oldest = prev
+            continue
         if ok:
             items += part
             src = src or name
@@ -295,7 +308,7 @@ def run(a):
         else:
             items, src, reached = code_news(code, frm)
             data["items"], data["src"] = pick(items, frm, date), src
-            data["status"] = "error" if not src else "ok" if reached else "partial"
+            data["status"] = "error" if not src else "empty" if src.endswith(":empty") else "ok" if reached else "partial"
             print(f"- {key} ({code}) {frm}~{date}: {len(data['items'])}건 [{src or '실패'}]")
         rows.append({"key": key, "data": data, "updated_at": now.isoformat()})
         if not a.dry_run and len(rows) - saved >= 10:  # 10건마다 바로 저장 (중간에 멈춰도 그때까지는 남음)
