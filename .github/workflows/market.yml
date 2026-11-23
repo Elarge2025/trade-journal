@@ -22,7 +22,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pandas==2.2.3 lxml==5.3.0
       - name: 시장 데이터 가져와서 저장
         env:
           SUPABASE_URL: https://qayneaypdazflrvwcphs.supabase.co

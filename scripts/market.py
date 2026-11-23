@@ -1,15 +1,14 @@
-"""매매 복기노트: 코스피·코스닥 일별 시장 데이터를 네이버 금융에서 모아 Supabase market_days 표에 저장.
+"""매매 복기노트: 코스피·코스닥 일별 시장 데이터를 Daum·네이버 금융에서 모아 Supabase market_days 표에 저장.
 
 python scripts/market.py --days 7            # 최근 7일 (매일 자동 실행)
 python scripts/market.py --days 400          # 1년치 채우기
 python scripts/market.py --days 10 --dry-run # 저장 없이 출력만
 """
-import argparse, ast, datetime as dt, io, json, math, os, re, sys, time, urllib.request
-import pandas as pd
+import argparse, ast, datetime as dt, json, os, re, sys, time, urllib.error, urllib.request
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-      "Referer": "https://finance.naver.com/"}
-MARKETS = {"kospi": {"code": "KOSPI", "sosok": "01"}, "kosdaq": {"code": "KOSDAQ", "sosok": "02"}}
+      "Referer": "https://finance.daum.net/", "Accept": "application/json, text/plain, */*"}
+MARKETS = {"kospi": {"code": "KOSPI"}, "kosdaq": {"code": "KOSDAQ"}}
 
 
 def fetch(url, enc="euc-kr", tries=3):
@@ -23,45 +22,35 @@ def fetch(url, enc="euc-kr", tries=3):
             time.sleep(1.5 * (i + 1))
 
 
-def num(v):
-    if v is None or (isinstance(v, float) and math.isnan(v)):
-        return None
-    s = re.sub(r"[,%\s]", "", str(v)).replace("+", "")
-    try:
-        return float(s)
-    except ValueError:
-        return None
 
 
-def ymd(s):
-    m = re.match(r"^\s*(\d{2,4})\.(\d{1,2})\.(\d{1,2})", str(s))
-    if not m:
-        return None
-    y = int(m.group(1)); y = y + 2000 if y < 100 else y
-    return f"{y:04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
 
 
-def index_close_table(code, pages):
-    """일별 체결가·등락률·거래량(천주)·거래대금(백만원)."""
-    out = {}
-    for p in range(1, pages + 1):
-        html = fetch(f"https://finance.naver.com/sise/sise_index_day.naver?code={code}&page={p}")
-        df = pd.read_html(io.StringIO(html))[0]
-        df.columns = [str(c) for c in df.columns]
-        got = 0
-        for _, r in df.iterrows():
-            d = ymd(r.iloc[0])
-            if not d:
-                continue
-            got += 1
-            out[d] = {"close": num(r.iloc[1]), "chgPct": num(r.iloc[3]), "vol": num(r.iloc[4]), "value": num(r.iloc[5])}
-        if got == 0:
+def daum_days(market, start):
+    """종가·등락률·거래량(천주)·거래대금(백만원)·투자자별 순매수(억원). 출처: Daum 금융."""
+    out, page = {}, 1
+    while page <= 40:
+        txt = fetch(f"https://finance.daum.net/api/market_index/days?page={page}&perPage=100&market={market}&pagination=true", enc="utf-8")
+        rows = json.loads(txt).get("data") or []
+        for r in rows:
+            d = str(r.get("date", ""))[:10]
+            close, chg = r.get("tradePrice"), r.get("changePrice")
+            prev = (close - chg) if close is not None and chg is not None else None
+            eok = lambda v: None if v is None else round(v / 1e8, 1)
+            out[d] = {"close": close, "chg": chg, "chgPct": round(chg / prev * 100, 2) if prev else None,
+                      "vol": r.get("accTradeVolume"), "value": r.get("accTradePrice"),
+                      "_flow": {"indiv": eok(r.get("individualStraightPurchasePrice")),
+                                "foreign": eok(r.get("foreignStraightPurchasePrice")),
+                                "inst": eok(r.get("institutionStraightPurchasePrice"))}}
+        if not rows or len(rows) < 100 or min(out) < start.isoformat():
             break
-        time.sleep(0.15)
+        page += 1
+        time.sleep(0.3)
     return out
 
 
 def index_ohlc(code, start, end):
+    """시가·고가·저가·종가. 출처: 네이버 금융 차트."""
     txt = fetch(f"https://api.finance.naver.com/siseJson.naver?symbol={code}&requestType=1"
                 f"&startTime={start:%Y%m%d}&endTime={end:%Y%m%d}&timeframe=day", enc="utf-8")
     rows = ast.literal_eval(re.sub(r"\s+", "", txt))
@@ -72,45 +61,28 @@ def index_ohlc(code, start, end):
     return out
 
 
-def investor_flow(sosok, end, pages):
-    """투자자별 순매수 (억원): 개인, 외국인, 기관계."""
-    out = {}
-    for p in range(1, pages + 1):
-        html = fetch(f"https://finance.naver.com/sise/investorDealTrendDay.naver?bizdate={end:%Y%m%d}&sosok={sosok}&page={p}")
-        df = pd.read_html(io.StringIO(html))[0]
-        got = 0
-        for _, r in df.iterrows():
-            d = ymd(r.iloc[0])
-            if not d:
-                continue
-            got += 1
-            out[d] = {"indiv": num(r.iloc[1]), "foreign": num(r.iloc[2]), "inst": num(r.iloc[3])}
-        if got == 0:
-            break
-        time.sleep(0.15)
-    return out
-
-
 def collect(days):
-    end = dt.date.today() + dt.timedelta(days=1)
-    start = end - dt.timedelta(days=days + 1)
-    idx_pages = math.ceil(days * 0.72 / 6) + 2
-    flow_pages = math.ceil(days * 0.72 / 10) + 2
+    end = dt.date.today()
+    start = end - dt.timedelta(days=days)
     merged = {}
     for key, m in MARKETS.items():
-        closes = index_close_table(m["code"], idx_pages)
-        ohlc = index_ohlc(m["code"], start, end)
-        flow = investor_flow(m["sosok"], end, flow_pages)
-        print(f"[{key}] 종가표 {len(closes)}일 · 시고저종 {len(ohlc)}일 · 수급 {len(flow)}일")
-        for d in set(closes) | set(ohlc) | set(flow):
-            if d < start.isoformat():
+        daum = daum_days(m["code"], start)
+        ohlc = index_ohlc(m["code"], start, end + dt.timedelta(days=1))
+        print(f"[{key}] Daum {len(daum)}일 · 시고저종 {len(ohlc)}일")
+        for d in set(daum) | set(ohlc):
+            if d < start.isoformat() or d > end.isoformat():
                 continue
             ent = merged.setdefault(d, {})
-            info = {**closes.get(d, {}), **{k: v for k, v in ohlc.get(d, {}).items() if v is not None}}
+            x = dict(daum.get(d, {}))
+            flow = x.pop("_flow", None)
+            o = ohlc.get(d, {})
+            info = {**x, **{k: o[k] for k in ("open", "high", "low") if o.get(k) is not None}}
+            if info.get("close") is None and o.get("close") is not None:
+                info["close"] = o["close"]
             if info:
                 ent[key] = info
-            if d in flow:
-                ent.setdefault("flow", {})[key] = flow[d]
+            if flow and any(v is not None for v in flow.values()):
+                ent.setdefault("flow", {})[key] = flow
     return dict(sorted(merged.items()))
 
 
