@@ -730,8 +730,9 @@ function coachSection(all) {
     <div class="ai-box">
       <div class="acts"><b style="margin-right:auto">AI로 깊게 분석하기</b>
         <button class="btn primary" type="button" id="aiCopy">분석 자료 복사 · 무료</button>
+        <button class="btn" type="button" id="aiPdf">차트 PDF 만들기</button>
         <button class="btn" type="button" id="aiPaste">Claude 답변 저장</button></div>
-      <p class="coach-note" style="margin:6px 0 0">무료: 복사한 뒤 claude.ai의 <b>트레이딩</b> 프로젝트에서 새 채팅을 열고 붙여넣으세요. 미모사 원본 자료 전체를 근거로 분석해 줘요. 답변을 복사해 'Claude 답변 저장'에 붙여넣으면 여기에 기록이 남아요.</p>
+      <p class="coach-note" style="margin:6px 0 0">무료: 복사한 뒤 claude.ai의 <b>트레이딩</b> 프로젝트에서 새 채팅을 열고 붙여넣으세요. 차트까지 보게 하려면 <b>차트 PDF</b>도 같이 첨부하세요. 미모사 원본 자료 전체를 근거로 분석해 줘요. 답변을 복사해 'Claude 답변 저장'에 붙여넣으면 여기에 기록이 남아요.</p>
       <div class="acts" style="margin-top:10px"><span class="muted" style="font-size:12.5px;margin-right:auto">API 키를 등록했다면 바로 분석 (유료)</span>
         <button class="btn" type="button" data-ai="fast" ${aiBusy?"disabled":""}>빠르게 · 약 10원</button>
         <button class="btn" type="button" data-ai="deep" ${aiBusy?"disabled":""}>꼼꼼하게 · 약 150원</button></div>
@@ -765,6 +766,13 @@ function chatPrompt(all) {
 - 모든 주장에 내 숫자(건수, 금액, 승률, 날짜, 종목)를 붙여줘. 표본이 적으면 그렇다고 말해줘.
 - 결과보다 과정(원칙 준수, 손절, 비중, 시장 판단)을 평가해줘. 특정 종목을 사라/팔라는 말은 빼줘.
 - 미모사 매매일지와 비교해서, 미모사가 매매하던 시장 상황·종목 선택·비중과 내가 다른 점이 보이면 짚어줘.
+- 차트 PDF를 같이 첨부했다면, PDF의 매매마다 아래를 정리해줘:
+  · 내가 실제로 들어가고 판 자리 (차트·설명에서 보이는 만큼)
+  · 미모사 기준이었다면 어디서 들어갔어야 했나: 차트의 시간·가격대·캔들 위치로 구체적으로, 어떤 강의 기준 때문인지 (거래대금 집중, 신고가 돌파, M타점 수렴 후 발산, 매물 소화 후 차곡차곡 돌파, 종가베팅 근거 등)
+  · 미모사 기준이었다면 어디서 팔았어야 했나: 손절 자리(손절가 이탈, 분봉 추세 꺾임, 긴 윗꼬리·음봉)와 익절 자리(다음 날 아침 대응, 갭 크기별 분할 익절 등)
+  · 아예 들어가지 않았어야 할 매매라면 그렇다고 말하고 이유를 들어줘 (주도주 아님, 급등 중 추격, 추세 꺾인 자리, 어려운 시장 등)
+  · 중요: 결과를 알고 고르는 이상적인 타점이 아니라, 그 시점까지 차트에 보이던 정보만으로 미모사 기준을 적용했을 때 가능했던 자리여야 해. 차트에 분봉·거래대금이 안 보여서 판단이 어려우면 추측하지 말고 어떤 차트를 더 캡처하면 되는지 알려줘.
+  · 맨 끝에 '매매별 진입·매도 비교' 표로 요약해줘 (날짜 | 종목 | 내 진입·매도 | 미모사 기준 진입·매도 | 핵심 차이).
 
 형식 (아래 제목 그대로):
 ## 지금 나는 이렇게 매매하고 있어요
@@ -791,6 +799,111 @@ function textModal(title, body, value, okText, onOk) {
     if (a.dataset.a === "no") return w.remove();
     if (a.dataset.a === "ok" && await onOk(ta.value)) w.remove();
   });
+}
+/* ---- 차트 PDF ---- */
+function loadScript(src) {
+  return new Promise((res, rej) => { const el = document.createElement("script"); el.src = src; el.onload = res; el.onerror = rej; document.head.appendChild(el); });
+}
+async function blobImage(blob) {
+  const url = URL.createObjectURL(blob);
+  try { return await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; }); }
+  finally { setTimeout(() => URL.revokeObjectURL(url), 5000); }
+}
+async function photoCanvas(p) {
+  const { data, error } = await sb.storage.from("charts").download(p.asset);
+  if (error || !data) return null;
+  const img = await blobImage(data);
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0);
+  if ((p.marks || []).length) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${marksSvg(p.marks, W, H)}</svg>`;
+    try { ctx.drawImage(await blobImage(new Blob([svg], { type: "image/svg+xml" })), 0, 0); } catch {}
+  }
+  return cv;
+}
+function wrapLines(ctx, text, maxW) {
+  const out = [];
+  for (const para of String(text || "").split(/\n/)) {
+    let line = "";
+    for (const ch of para) { if (ctx.measureText(line + ch).width > maxW && line) { out.push(line); line = ch.trimStart(); } else line += ch; }
+    out.push(line);
+  }
+  return out;
+}
+async function buildChartPdf(trades, onProgress) {
+  if (!window.jspdf) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+  const PW = 1240, PH = 1754, M = 64, CW = PW - M * 2;
+  const font = (w, sz) => `${w} ${sz}px "IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif`;
+  const pdf = new window.jspdf.jsPDF({ unit: "px", format: [PW, PH], hotfixes: ["px_scaling"], compress: true });
+  let first = true, cv, ctx, y;
+  const page = () => {
+    if (cv) { if (!first) pdf.addPage([PW, PH]); pdf.addImage(cv.toDataURL("image/jpeg", 0.82), "JPEG", 0, 0, PW, PH); first = false; }
+    cv = document.createElement("canvas"); cv.width = PW; cv.height = PH; ctx = cv.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, PW, PH); ctx.textBaseline = "top"; y = M;
+  };
+  const text = (t, w, sz, color, lh = 1.5) => {
+    ctx.font = font(w, sz); ctx.fillStyle = color;
+    for (const ln of wrapLines(ctx, t, CW)) { if (y + sz * lh > PH - M) page(), ctx.font = font(w, sz), ctx.fillStyle = color; ctx.fillText(ln, M, y); y += sz * lh; }
+  };
+  page();
+  text("매매 복기 차트 묶음", "700", 40, "#121821"); y += 6;
+  text(`${trades.length}건 · 만든 날 ${todayStr()} · 사진 위 표시는 내가 복기하며 그린 것`, "400", 22, "#5A6577"); y += 24;
+  for (let i = 0; i < trades.length; i++) {
+    const t = trades[i]; onProgress && onProgress(i + 1, trades.length);
+    if (y > PH - M - 400) page();
+    ctx.fillStyle = "#1C4F8C"; ctx.fillRect(M, y, CW, 4); y += 18;
+    const g = GRADES[+t.grade] ? ` · 평가 ${GRADES[+t.grade]}` : "";
+    text(`${i + 1}. ${t.date}  ${t.name}`, "700", 32, "#121821");
+    text(`${t.type || "유형 없음"}${g} · 순손익 ${t.c ? signed(t.c.pnl) + "원 (" + spct(t.c.ret) + ")" : "–"}${(t.mistakes || []).length ? " · 실수: " + t.mistakes.join(", ") : ""}`, "500", 22, t.c && t.c.pnl < 0 ? "#1559C7" : "#CC1F2A");
+    if ((t.reason || "").trim()) { y += 6; text("진입근거: " + t.reason.trim(), "400", 21, "#121821"); }
+    y += 10;
+    for (const p of t.photos || []) {
+      const pc = await photoCanvas(p).catch(() => null);
+      let w = CW, h = 0;
+      if (pc) { h = pc.height * (CW / pc.width); const maxH = PH - M * 2 - 120; if (h > maxH) { h = maxH; w = pc.width * (h / pc.height); } }
+      if (y + 36 + h > PH - M) page();
+      text(`[${p.title || "사진"}]  ${t.date} ${t.name}`, "700", 22, "#1C4F8C");
+      if (pc) { ctx.drawImage(pc, M, y, w, h); ctx.strokeStyle = "#D8DEE7"; ctx.strokeRect(M, y, w, h); y += h + 10; }
+      else text("(사진을 불러오지 못했어요)", "400", 20, "#8A94A4");
+      if ((p.note || "").trim()) text(p.note.trim(), "400", 21, "#121821", 1.6);
+      y += 14;
+    }
+    if ((t.memo || "").trim()) text("복기 메모: " + t.memo.trim(), "400", 21, "#121821", 1.6);
+    if ((t.lesson || "").trim()) text("교훈: " + t.lesson.trim(), "600", 21, "#121821");
+    y += 28;
+  }
+  page();
+  return pdf.output("blob");
+}
+function chartPdfDialog() {
+  const all = periodList(enriched(), state.coachPeriod).filter(t => t.c && (t.photos || []).length);
+  if (!all.length) { toast("이 기간에 차트 사진이 있는 매매가 없어요"); return; }
+  const w = document.createElement("div"); w.className = "modal-wrap";
+  w.innerHTML = `<form class="modal" style="max-width:420px;display:flex;flex-direction:column;gap:12px">
+    <h2>차트 PDF 만들기</h2>
+    <p style="margin:0">${esc((PERIODS.find(p => p[0] === state.coachPeriod) || [,"전체"])[1])} 동안 사진이 있는 매매 ${all.length}건 중에서 골라요. 사진에 그린 표시와 설명도 같이 들어가요.</p>
+    <label class="f"><span>고르는 기준</span><select class="inp" id="pdf-by">
+      <option value="loss">손실 큰 순</option><option value="grade">평가 낮은 순</option><option value="recent">최근 순</option><option value="win">수익 큰 순</option></select></label>
+    <label class="f"><span>몇 건</span><select class="inp" id="pdf-n"><option>5</option><option selected>10</option><option>15</option><option>20</option></select></label>
+    <p class="muted" style="margin:0;font-size:12.5px">claude.ai 채팅에는 PDF 한 파일로 올리면 돼요. 너무 많으면 차트를 자세히 못 볼 수 있어 10건 안팎을 추천해요.</p>
+    <div class="acts" style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" type="button" data-a="no">취소</button><button class="btn primary" type="submit" id="pdf-go">만들기</button></div></form>`;
+  document.body.appendChild(w);
+  w.addEventListener("click", e => { if (e.target === w || e.target.closest('[data-a="no"]')) w.remove(); });
+  w.querySelector("form").onsubmit = async e => {
+    e.preventDefault();
+    const by = $("#pdf-by", w).value, n = +$("#pdf-n", w).value, go = $("#pdf-go", w);
+    const sorters = { loss: (a, b) => a.c.pnl - b.c.pnl, win: (a, b) => b.c.pnl - a.c.pnl, grade: (a, b) => (+a.grade || 9) - (+b.grade || 9) || a.c.pnl - b.c.pnl,
+      recent: (a, b) => (b.date || "").localeCompare(a.date || "") };
+    const pick = [...all].sort(sorters[by]).slice(0, n).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    go.disabled = true;
+    try {
+      const blob = await buildChartPdf(pick, (i, total) => { go.textContent = `만드는 중… ${i}/${total}`; });
+      const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `복기차트_${todayStr()}.pdf` });
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      w.remove(); toast(`PDF를 내려받았어요 (${(blob.size / 1048576).toFixed(1)}MB)`);
+    } catch (err) { go.disabled = false; go.textContent = "다시 만들기"; toast("PDF를 만들지 못했어요. 인터넷 연결을 확인해 주세요"); }
+  };
 }
 async function copyForChat() {
   const list = enriched();
@@ -838,6 +951,7 @@ document.addEventListener("click", e => {
   const pb = e.target.closest("#coachPeriod button");
   if (pb) { state.coachPeriod = pb.dataset.v; try { localStorage.setItem("tj-coach-period", state.coachPeriod); } catch {} render(); return; }
   if (e.target.closest("#aiCopy")) { copyForChat(); return; }
+  if (e.target.closest("#aiPdf")) { chartPdfDialog(); return; }
   if (e.target.closest("#aiPaste")) { pasteReport(); return; }
   const ab = e.target.closest("[data-ai]"); if (ab) { runAI(ab.dataset.ai); return; }
   const hb = e.target.closest("[data-rep]"); if (hb) { aiView = hb.dataset.rep; render(); }
