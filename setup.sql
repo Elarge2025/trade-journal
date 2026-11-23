@@ -47,3 +47,13 @@ create policy "own charts write" on storage.objects for insert to authenticated
 drop policy if exists "own charts delete" on storage.objects;
 create policy "own charts delete" on storage.objects for delete to authenticated
   using (bucket_id = 'charts' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- 시장 데이터 (코스피·코스닥 일별, 투자자별 순매수). 쓰기는 GitHub Actions의 secret 키만.
+create table if not exists public.market_days (
+  date date primary key,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.market_days enable row level security;
+drop policy if exists "read market" on public.market_days;
+create policy "read market" on public.market_days for select to authenticated using (true);
