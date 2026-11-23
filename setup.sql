@@ -69,3 +69,16 @@ alter table public.coach_reports enable row level security;
 drop policy if exists "own coach" on public.coach_reports;
 create policy "own coach" on public.coach_reports for all to authenticated
   using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- 영웅문 체결 내역 (진입·청산 시각, 보유시간, 물타기 자동 감지용)
+create table if not exists public.fills (
+  key text not null,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  doc jsonb not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, key)
+);
+alter table public.fills enable row level security;
+drop policy if exists "own fills" on public.fills;
+create policy "own fills" on public.fills for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());

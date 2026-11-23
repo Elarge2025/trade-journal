@@ -410,15 +410,25 @@ const PHOTO_PROMPTS = [
   {title:"매도 · 기타", q:"왜 여기서 팔았나 · 다시 보면 당시 가능했던 더 나은 판단은?"}
 ];
 
-const state = { coachReports: [], coachPeriod: (() => { try { return localStorage.getItem("tj-coach-period") || "90"; } catch { return "90"; } })(), market: new Map(), trades: [], weeks: [], cfg: {...DEFAULTS}, loaded: false, readOnly: false };
+const state = { fills: [], fx: new Map(), coachReports: [], coachPeriod: (() => { try { return localStorage.getItem("tj-coach-period") || "90"; } catch { return "90"; } })(), market: new Map(), trades: [], weeks: [], cfg: {...DEFAULTS}, loaded: false, readOnly: false };
 let sb = null, session = null;
 const urlCache = new Map();
 const api = {
   uid: () => session?.user?.id,
   async loadAll() {
+    const all = async (table, cols) => {
+      const out = [];
+      for (let from = 0; from < 100000; from += 1000) {
+        const r = await sb.from(table).select(cols).range(from, from + 999);
+        if (r.error) return { data: out.length ? out : null, error: out.length ? null : r.error };
+        out.push(...r.data); if (r.data.length < 1000) break;
+      }
+      return { data: out, error: null };
+    };
+    try { const f = await all("fills", "key, doc"); if (!f.error) { state.fills = f.data.map(r => r.doc); state.fx = buildFx(state.fills); } } catch {}
     const [t, w, s] = await Promise.all([
-      sb.from("trades").select("id, doc"),
-      sb.from("weeks").select("id, doc"),
+      all("trades", "id, doc"),
+      all("weeks", "id, doc"),
       sb.from("settings").select("doc").maybeSingle()
     ]);
     if (t.error) throw t.error; if (w.error) throw w.error;
@@ -484,9 +494,57 @@ function sortTrades(list, mode) {
   if (by) list.sort((a, b) => by(a, b) || (b.date||"").localeCompare(a.date||""));
   return list;
 }
+/* ---- 체결 분석: 종목별 포지션을 따라가며 진입·청산 시각, 보유시간, 물타기·불타기를 찾는다 ---- */
+function buildFx(fills) {
+  const byName = new Map();
+  for (const f of fills) { if (!f || !f.name || !f.qty) continue; if (!byName.has(f.name)) byName.set(f.name, []); byName.get(f.name).push(f); }
+  const res = new Map();
+  for (const [name, arr] of byName) {
+    arr.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time) || (a.order || 0) - (b.order || 0));
+    let pos = 0, cost = 0, rt = null;
+    const close = (r) => {
+      const key = r.closeDate + "|" + name;
+      const cur = res.get(key) || { rts: [], fills: [] };
+      cur.rts.push(r); cur.fills.push(...r.fills); res.set(key, cur);
+    };
+    for (const f of arr) {
+      if (f.side === "buy") {
+        if (pos <= 0) { pos = 0; cost = 0; rt = { fills: [], buys: 0, avgDown: 0, pyramid: 0, open: f, partial: false }; }
+        if (pos > 0) { const avg = cost / pos; if (f.price < avg * 0.999) rt.avgDown++; else if (f.price > avg * 1.001) rt.pyramid++; }
+        pos += f.qty; cost += f.qty * f.price; rt.buys++; rt.fills.push(f);
+      } else {
+        if (!rt || pos <= 0) { rt = { fills: [], buys: 0, avgDown: 0, pyramid: 0, open: null, partial: true }; pos = f.qty; cost = f.qty * f.price; }
+        const q = Math.min(f.qty, pos); cost -= pos ? cost / pos * q : 0; pos -= q; rt.fills.push(f);
+        if (pos <= 0.0001) { rt.closeDate = f.date; rt.last = f; close(rt); rt = null; pos = 0; cost = 0; }
+      }
+    }
+  }
+  for (const [key, v] of res) {
+    const first = v.rts.find(r => r.open)?.open || null, last = v.rts[v.rts.length - 1].last;
+    const mins = (f) => { const [h, m, s2] = f.time.split(":").map(Number); return h * 60 + m + (s2 || 0) / 60; };
+    const dayDiff = first ? Math.round((new Date(last.date) - new Date(first.date)) / 864e5) : 0;
+    v.entryTime = first ? first.time : null; v.entryDate = first ? first.date : null; v.exitTime = last.time;
+    v.overnight = dayDiff > 0;
+    v.holdMin = first ? (dayDiff ? null : Math.max(0, mins(last) - mins(first))) : null;
+    v.avgDown = v.rts.reduce((a, r) => a + r.avgDown, 0); v.pyramid = v.rts.reduce((a, r) => a + r.pyramid, 0);
+    v.rounds = v.rts.length; v.partial = v.rts.some(r => r.partial);
+    v.fills.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  }
+  return res;
+}
+const TIME_BUCKETS = [
+  ["NXT 프리장 (08:00~08:59)", "08:00", "09:00"], ["장 시작 10분 (09:00~09:09)", "09:00", "09:10"], ["09:10~09:29", "09:10", "09:30"],
+  ["09:30~09:59", "09:30", "10:00"], ["10시~11시대", "10:00", "12:00"], ["점심~오후 (12:00~15:19)", "12:00", "15:20"],
+  ["종가 무렵 (15:20~15:30)", "15:20", "15:31"], ["NXT 애프터 (15:30~20:00)", "15:31", "20:01"]];
+function timeBucket(tm) { if (!tm) return null; const b = TIME_BUCKETS.find(([, a, z]) => tm >= a && tm < z); return b ? b[0] : null; }
+function holdBucket(fx) {
+  if (!fx || !fx.entryTime) return null;
+  if (fx.overnight) return "다음 날 이후 (오버나이트)";
+  const m = fx.holdMin; return m < 3 ? "3분 미만" : m < 10 ? "3~10분" : m < 30 ? "10~30분" : m < 120 ? "30분~2시간" : "2시간 넘게 (당일)";
+}
 function hasJournal(t) { return !!((t.reason||"").trim() || (t.memo||"").trim() || (t.lesson||"").trim() || (t.photos||[]).length || (t.mistakes||[]).length); }
 function enriched() {
-  return state.trades.map(t => ({ ...t, c: calc(t) }))
+  return state.trades.map(t => ({ ...t, c: calc(t), fx: state.fx.get(t.date + "|" + t.name) || null }))
     .sort((a,b) => (b.date||"").localeCompare(a.date||"") || (b.createdAt||0) - (a.createdAt||0));
 }
 function summarize(list) {
@@ -592,7 +650,7 @@ function renderLog() {
   wrap.innerHTML = `<div class="list" role="list">
     <div class="list-head"><span>날짜</span><span>종목</span><span>평가</span><span>유형</span><span>실수</span><span class="rt">순손익</span><span class="rt">R</span><span class="rt">사진</span></div>
     ${list.map(t => `<button class="row ${t.c ? (t.c.win ? "win" : "loss") : ""}" type="button" data-open="${esc(t.id)}" role="listitem">
-      <span class="date">${esc(t.date || "날짜 없음")}</span>
+      <span class="date">${esc(t.date || "날짜 없음")}${t.fx?.entryTime ? `<br><span style="font-size:11.5px;color:var(--faint)">${esc(t.fx.entryTime.slice(0,5))}${t.fx.overnight ? " 전날" : ""} 진입</span>` : ""}</span>
       <span class="name">${esc(t.name || "이름 없음")}${t.c ? "" : ` <span class="chip">미완료</span>`}${hasJournal(t) ? "" : ` <span class="chip todo">일지 없음</span>`}${gradeChip(t.grade)}</span>
       <span class="grade-cell">${gradeChip(t.grade) || `<span class="muted" style="font-size:12px">–</span>`}</span>
       <span class="type-cell">${t.type ? `<span class="chip type">${esc(t.type)}</span>` : ""}</span>
@@ -679,6 +737,34 @@ function marketCard(date) {
   };
   return `<div class="mkt-head"><b>그날 시장</b><span>${esc(date)} · 순매수는 억원</span></div><div class="mkt-grid">${col("kospi","코스피")}${col("kosdaq","코스닥")}</div>`;
 }
+function fillsCard(fx, date) {
+  const hold = fx.overnight ? `${esc(fx.entryDate)} ${esc(fx.entryTime)} 진입 → 오버나이트` : fx.holdMin != null ? `${Math.round(fx.holdMin)}분 보유` : "진입 체결 없음";
+  const tags = [fx.avgDown ? `<span class="chip mis">물타기 ${fx.avgDown}번 (자동 감지)</span>` : "", fx.pyramid ? `<span class="chip type">불타기 ${fx.pyramid}번</span>` : "",
+    fx.rounds > 1 ? `<span class="chip">왕복 ${fx.rounds}번</span>` : "", fx.partial ? `<span class="chip">이전 매수 체결 없음</span>` : ""].join("");
+  return `<div class="mkt-head"><b>체결 기록</b><span>${fx.entryTime ? "진입 " + esc(fx.entryTime.slice(0,5)) + " · " : ""}청산 ${esc(fx.exitTime.slice(0,5))} · ${hold}</span></div>
+    ${tags ? `<div style="margin-bottom:8px">${tags}</div>` : ""}
+    <div class="tscroll"><table class="t"><thead><tr><th>시각</th><th>구분</th><th>체결가</th><th>수량</th><th>금액</th><th>거래소</th></tr></thead><tbody>
+    ${fx.fills.map(f => `<tr><td class="num">${f.date !== date ? esc(f.date.slice(5)) + " " : ""}${esc(f.time)}</td><td class="${f.side === "buy" ? "up" : "down"}">${f.side === "buy" ? "매수" : "매도"}${f.credit ? " (신용)" : ""}</td>
+      <td class="num">${won(f.price)}</td><td class="num">${won(f.qty)}</td><td class="num">${won(f.price * f.qty)}</td><td>${esc(f.ex)}</td></tr>`).join("")}
+    </tbody></table></div>`;
+}
+function bucketTable(list, label, keyFn, order) {
+  const g = new Map();
+  for (const t of list) { const k = keyFn(t); if (!k) continue; if (!g.has(k)) g.set(k, []); g.get(k).push(t); }
+  if (!g.size) return "";
+  const rows = order.filter(k => g.has(k)).map(k => { const a = g.get(k), p = a.reduce((s, t) => s + t.c.pnl, 0); return { k, n: a.length, wr: a.filter(t => t.c.win).length / a.length, p, e: p / a.length }; });
+  return `<div class="tscroll"><table class="t"><thead><tr><th>${label}</th><th>건수</th><th>승률</th><th>순손익</th><th>건당 기대값</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${esc(r.k)}</td><td class="num">${r.n}</td><td class="num">${pct(r.wr, 0)}</td><td class="num ${cls(r.p)}">${signed(r.p)}</td><td class="num ${cls(r.e)}">${signed(r.e)}</td></tr>`).join("")}
+  </tbody></table></div>`;
+}
+function timeSection(list) {
+  const done = list.filter(t => t.c && t.fx && t.fx.entryTime);
+  if (!done.length) return `<p class="muted">영웅문 <b>[0343] 기간별 주문체결상세</b>를 엑셀로 저장해서 매매기록 탭의 '영웅문 내역 가져오기'로 올리면, 진입 시각별·보유 시간별 성과가 여기에 나와요.</p>`;
+  const avgD = done.filter(t => t.fx.avgDown), ad = avgD.reduce((s, t) => s + t.c.pnl, 0);
+  return `<h3 style="margin:0 0 6px">진입 시각별</h3>${bucketTable(done, "진입 시각", t => timeBucket(t.fx.entryTime), TIME_BUCKETS.map(b => b[0]))}
+    <h3 style="margin:14px 0 6px">보유 시간별</h3>${bucketTable(done, "보유 시간", t => holdBucket(t.fx), ["3분 미만","3~10분","10~30분","30분~2시간","2시간 넘게 (당일)","다음 날 이후 (오버나이트)"])}
+    <p class="muted" style="font-size:12px;margin:8px 0 0">체결 기록이 있는 매매 ${done.length}건 기준 · 자동 감지된 물타기 매매 ${avgD.length}건, 순손익 <span class="${cls(ad)}">${signed(ad)}</span>원 · 진입 시각은 그날 첫 매수 체결 기준</p>`;
+}
 function marketBreakdown(list) {
   const done = list.filter(t => t.c && state.market.get(t.date));
   if (!done.length) return `<p class="muted">시장 데이터가 쌓이면 지수가 오른 날과 내린 날의 내 성과를 비교해 보여줘요.</p>`;
@@ -749,9 +835,10 @@ function coachPayload(all) {
   return {
     기간: (PERIODS.find(p => p[0] === state.coachPeriod) || [,"전체"])[1],
     요약: { 매매수: s.n, 승률: s.winRate, 평균수익: Math.round(s.avgW), 평균손실: Math.round(s.avgL), 손익비: s.payoff, 건당기대값: Math.round(s.exp ?? 0), 총손익: Math.round(s.total), 총비용: s.cost, 최대연속손실: s.maxRun, 손절준수율: s.stopRate },
-    매매열: ["날짜","종목","유형","평가(5최상~1최악)","순손익","수익률%","매수금액","실수","손절준수","R","코스닥등락%","코스피등락%","외국인코스닥순매수억"],
+    매매열: ["날짜","종목","유형","평가(5최상~1최악)","순손익","수익률%","매수금액","실수","손절준수","R","코스닥등락%","코스피등락%","외국인코스닥순매수억","진입시각","청산시각","보유분(오버나이트는 -1)","자동감지물타기횟수"],
     매매: list.slice(-250).map(t => [t.date, t.name, t.type || "", t.grade || "", Math.round(t.c.pnl), +(t.c.ret * 100).toFixed(2), Math.round(t.c.buyAmt),
-      (t.mistakes || []).join("/"), t.stopKept || "", t.c.R != null ? +t.c.R.toFixed(2) : "", mk(t.date)?.kosdaq?.chgPct ?? "", mk(t.date)?.kospi?.chgPct ?? "", mk(t.date)?.flow?.kosdaq?.foreign ?? ""]),
+      (t.mistakes || []).join("/"), t.stopKept || "", t.c.R != null ? +t.c.R.toFixed(2) : "", mk(t.date)?.kosdaq?.chgPct ?? "", mk(t.date)?.kospi?.chgPct ?? "", mk(t.date)?.flow?.kosdaq?.foreign ?? "",
+      t.fx?.entryTime || "", t.fx?.exitTime || "", t.fx ? (t.fx.overnight ? -1 : Math.round(t.fx.holdMin ?? 0)) : "", t.fx?.avgDown || ""]),
     복기글: list.filter(hasJournal).slice(-40).map(t => ({ 날짜: t.date, 종목: t.name, 순손익: Math.round(t.c.pnl), 평가: t.grade || "",
       진입근거: cut(t.reason, 300), 복기메모: cut(t.memo, 400), 교훈: cut(t.lesson, 150), 사진설명: (t.photos || []).map(p => cut(p.note, 250)).filter(Boolean) })),
     규칙진단: window.TJCoach ? TJCoach.analyze(list, state.market).items.map(i => ({ 구분: i.tone, 제목: i.title, 근거: i.mine })) : [],
@@ -878,6 +965,9 @@ async function buildChartPdf(trades, onProgress) {
         return `${n} ${idx(x.close)} (${x.chgPct > 0 ? "+" : ""}${x.chgPct?.toFixed(2)}%) 거래대금 ${fmtVal(x.value)}${fl}`; };
       text("그날 시장 · " + [one("kospi", "코스피"), one("kosdaq", "코스닥")].filter(Boolean).join("  |  "), "400", 19, "#5A6577");
     }
+    const tfx = t.fx || state.fx.get(t.date + "|" + t.name);
+    if (tfx) text("체결 · " + tfx.fills.map(f => `${f.date !== t.date ? f.date.slice(5) + " " : ""}${f.time} ${f.side === "buy" ? "매수" : "매도"} ${won(f.price)}×${won(f.qty)}`).join(" / ")
+      + (tfx.avgDown ? ` · 물타기 ${tfx.avgDown}번(자동)` : "") + (tfx.pyramid ? ` · 불타기 ${tfx.pyramid}번` : ""), "400", 19, "#5A6577");
     if ((t.reason || "").trim()) { y += 6; text("진입근거: " + t.reason.trim(), "400", 21, "#121821"); }
     y += 10;
     for (const p of t.photos || []) {
@@ -1024,6 +1114,7 @@ function renderStats() {
         <div class="card"><h3>월별 손익</h3>${monthChart(monthly(list))}</div>
         <div class="card"><h3>내가 잘하는 매매는?</h3>${breakdown(list, "type", state.cfg.types)}
           <p class="muted" style="font-size:12px;margin:8px 0 0">건수가 많고 기대값이 플러스인 유형이 내 무기예요.</p></div>
+        <div class="card"><h3>시간대별 성과</h3>${timeSection(list)}</div>
         <div class="card"><h3>시장 흐름별 성과</h3>${marketBreakdown(list)}
           <p class="muted" style="font-size:12px;margin:8px 0 0">지수가 빠지는 날 성과가 나쁘다면, 그런 날은 비중을 줄이는 규칙을 세워 보세요.</p></div>
         <div class="card"><h3>매매 평가별 성과</h3>${breakdown(list, "grade", ["5","4","3","2","1"])}
@@ -1357,6 +1448,7 @@ function openTrade(id) {
     <div class="sheet-body">
       <div class="calc" id="sh-calc"></div>
       <div class="mkt" id="sh-mkt"></div>
+      <div class="mkt" id="sh-fills" hidden></div>
       <section class="card" style="display:flex;flex-direction:column;gap:12px">
         <div class="fgrid">
           <label class="f"><span>날짜 (매도일)</span><input class="inp" type="date" id="t-date"></label>
@@ -1416,6 +1508,8 @@ function openTrade(id) {
     const c = calc(d);
     const risk = (d.buy > 0 && d.stop > 0 && d.stop < d.buy && d.qty > 0) ? (d.buy - d.stop) * d.qty : null;
     $("#sh-mkt").innerHTML = marketCard(d.date);
+    const fx = state.fx.get(d.date + "|" + d.name), fb = $("#sh-fills");
+    fb.hidden = !fx; if (fx) fb.innerHTML = fillsCard(fx, d.date);
     $("#sh-calc").innerHTML = c ? `
       <div><small>순손익</small><span class="num big ${cls(c.pnl)}">${signed(c.pnl)}</span></div>
       <div><small>수익률</small><span class="num ${cls(c.ret)}">${spct(c.ret)}</span></div>
@@ -1430,6 +1524,7 @@ function openTrade(id) {
   $(".sheet-body").addEventListener("input", sync);
   $("#t-type").addEventListener("change", sync);
   sync(); renderPhotos(); requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
+  sheet.original = JSON.stringify(draft);  // 처음 화면을 채우며 생긴 형식 차이는 변경으로 치지 않음
   L.querySelectorAll("[data-close]").forEach(b => b.onclick = closeTrade);
   $("#sh-save").onclick = saveTrade;
   $("#sh-pdf").onclick = () => exportTradePdf();
@@ -1577,9 +1672,36 @@ function xdate(v) {
   if (typeof v === "number") { const d = XLSX.SSF.parse_date_code(v); return d ? `${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}` : null; }
   const m = String(v).match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/); return m ? `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}` : null;
 }
+function xtime(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "number") { const sec = Math.round((v % 1) * 86400); return [Math.floor(sec / 3600), Math.floor(sec / 60) % 60, sec % 60].map(n => String(n).padStart(2, "0")).join(":"); }
+  const m = String(v).match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/); return m ? `${m[1].padStart(2, "0")}:${m[2]}:${m[3] || "00"}` : null;
+}
+function parseFillsRows(rows) {
+  const hi = rows.findIndex(r => r && r.some(c => String(c ?? "").includes("주문번호")) && r.some(c => String(c ?? "").includes("주문유형")));
+  if (hi < 0) return null;
+  const h1 = rows[hi].map(c => String(c ?? "").trim()), h2 = (rows[hi + 1] || []).map(c => String(c ?? "").trim());
+  const col = (h, name) => h.findIndex(c => c.includes(name));
+  const C = { order: col(h1, "주문번호"), code: col(h1, "종목번호"), kind: col(h1, "주문유형"), date: col(h2, "주문일자"), name: col(h2, "종목명"),
+    qty: col(h2, "체결수량"), price: col(h2, "체결평균단가"), cancel: col(h2, "정정"), time: col(h2, "체결시간"), ex: col(h2, "거래소"), credit: col(h2, "신용") };
+  if ([C.order, C.kind, C.date, C.name, C.qty, C.price, C.time].some(i => i < 0)) return null;
+  const out = []; let skipped = 0;
+  for (let i = hi + 2; i + 1 < rows.length; i += 2) {
+    const a = rows[i] || [], b = rows[i + 1] || [];
+    const qty = xnum(b[C.qty]), price = xnum(b[C.price]), time = xtime(b[C.time]), date = xdate(b[C.date]);
+    const kind = String(a[C.kind] ?? "");
+    if (!qty || !price || !time || !date || /취소|정정/.test(String(b[C.cancel] ?? ""))) { skipped++; continue; }
+    const side = kind.includes("매수") ? "buy" : kind.includes("매도") ? "sell" : null; if (!side) { skipped++; continue; }
+    const order = xnum(a[C.order]);
+    out.push({ key: `${date}|${order}`, date, time, order, code: String(a[C.code] ?? "").trim(), name: String(b[C.name] ?? "").trim(), side, qty, price,
+      ex: String(b[C.ex] ?? "").trim(), credit: /신용/.test(kind + String(b[C.credit] ?? "")) });
+  }
+  return { out, skipped };
+}
 async function parseHero(file) {
   const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
+  const fr = parseFillsRows(rows); if (fr) return { fills: fr.out, fillSkipped: fr.skipped, out: [], buyOnly: 0 };
   const hi = rows.findIndex(r => r && r.some(c => String(c ?? "").includes("거래일")) && r.some(c => String(c ?? "").includes("종목명")));
   if (hi < 0) throw new Error("format");
   const out = []; let buyOnly = 0;
@@ -1596,10 +1718,46 @@ async function parseHero(file) {
   return { out, buyOnly };
 }
 $("#importBtn").onclick = () => $("#importFile").click();
+async function importFills(fills) {
+  const have = new Set(state.fills.map(f => f.key)), seen = new Set();
+  const fresh = fills.filter(f => !have.has(f.key) && !seen.has(f.key) && seen.add(f.key));
+  const dates = [...new Set(fills.map(f => f.date))].sort();
+  const names = new Set(state.trades.map(t => t.date + "|" + t.name));
+  const fx = buildFx([...state.fills, ...fresh]);
+  const matched = [...fx.keys()].filter(k => names.has(k)).length;
+  const w = document.createElement("div"); w.className = "modal-wrap";
+  w.innerHTML = `<div class="modal" role="dialog" aria-modal="true" style="max-width:440px"><h2>체결 내역 가져오기</h2>
+    <dl class="import-sum">
+      <dt>체결 건수</dt><dd class="num">${fills.length}건</dd>
+      <dt>기간</dt><dd class="num">${dates[0]} ~ ${dates[dates.length - 1]}</dd>
+      <dt>새로 추가</dt><dd class="num">${fresh.length}건</dd>
+      <dt>이미 있어서 건너뜀</dt><dd class="num">${fills.length - fresh.length}건</dd>
+      <dt>매매 기록과 연결되는 매매</dt><dd class="num">${matched}건</dd>
+    </dl>
+    <p>체결 시각으로 진입·청산 시간, 보유 시간, 물타기·불타기를 자동으로 계산해요. 아직 다 팔지 않은 종목은 판 날 체결이 들어오면 이어져요.</p>
+    <div class="acts"><button class="btn" type="button" data-a="no">취소</button><button class="btn primary" type="button" data-a="yes" ${fresh.length ? "" : "disabled"}>${fresh.length}건 가져오기</button></div></div>`;
+  document.body.appendChild(w);
+  w.addEventListener("click", async ev => {
+    if (ev.target === w) return w.remove();
+    const a = ev.target.closest("[data-a]"); if (!a) return;
+    if (a.dataset.a === "no") return w.remove();
+    a.disabled = true; a.textContent = "가져오는 중…";
+    try {
+      const uid = api.uid();
+      const rows = fresh.map(f => ({ key: f.key, user_id: uid, doc: f }));
+      for (let i = 0; i < rows.length; i += 500) { const { error } = await sb.from("fills").upsert(rows.slice(i, i + 500)); if (error) throw error; }
+      w.remove(); toast(`체결 ${rows.length}건을 가져왔어요`); await refresh();
+    } catch (err) {
+      a.disabled = false; a.textContent = "다시 시도";
+      toast(/fills|relation|schema/i.test(err?.message || "") ? "Supabase에 fills 표를 먼저 만들어 주세요" : errMsg(err));
+    }
+  });
+}
 $("#importFile").onchange = async e => {
   const files = [...e.target.files]; e.target.value = ""; if (!files.length) return;
-  let all = [], buyOnly = 0, badFiles = [];
-  for (const f of files) { try { const r = await parseHero(f); all.push(...r.out); buyOnly += r.buyOnly; } catch { badFiles.push(f.name); } }
+  let all = [], buyOnly = 0, badFiles = [], fills = [];
+  for (const f of files) { try { const r = await parseHero(f); all.push(...r.out); buyOnly += r.buyOnly; if (r.fills) fills.push(...r.fills); } catch { badFiles.push(f.name); } }
+  if (fills.length && !all.length && !badFiles.length) return importFills(fills);
   const have = new Set(state.trades.map(t => t.importKey).filter(Boolean)), seen = new Set(); let dup = 0;
   const fresh = all.filter(t => { if (have.has(t.importKey) || seen.has(t.importKey)) { dup++; return false; } seen.add(t.importKey); return true; });
   const dates = fresh.map(t => t.date).sort();

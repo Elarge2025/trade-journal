@@ -60,11 +60,12 @@
     },
 
     function averagingDown(x) {
-      const g = x.done.filter(t => hasMis(t, "물타기"));
+      const g = x.done.filter(t => hasMis(t, "물타기") || (t.fx && t.fx.avgDown));
       if (!g.length) return null;
+      const auto = g.filter(t => t.fx && t.fx.avgDown && !hasMis(t, "물타기")).length;
       const s = group(g), share = x.all.lossSum ? s.lossSum / x.all.lossSum : 0;
       return { tone: "warn", w: (s.pnl < 0 ? 9 : 5) + share * 10, title: s.pnl < 0 ? "물타기가 계좌를 갉아먹고 있어요" : "물타기가 지금은 운 좋게 버텨 주고 있어요",
-        mine: `물타기 ${g.length}번, 그 매매들 순손익 ${won(s.pnl)}. 전체 손실의 ${pct(share)}가 여기서 나왔어요.`,
+        mine: `물타기한 매매 ${g.length}건` + (auto ? ` (그중 ${auto}건은 체결 기록에서 자동 감지)` : "") + `, 그 매매들 순손익 ${won(s.pnl)}. 전체 손실의 ${pct(share)}가 여기서 나왔어요.`,
         principle: "평단을 낮추려는 물타기는 손익비를 망가뜨리는 최악의 습관입니다. 반등 없이 흘러내리면 계좌가 박살나요. 추세가 꺾이면 바로 손절하고, 손절 기회를 놓쳤더라도 평단 낮추기 없이 반등 때 물량을 정리해 주세요.",
         src: [SRC.qa5] };
     },
@@ -230,6 +231,30 @@
         mine: `'비주도주·근거 없는 진입' ${g.length}건: 승률 ${pct(s.wr)}, 순손익 ${won(s.pnl)}.`,
         principle: "시가총액이 작고 대금이 적은 종목은 기술적 분석의 신뢰도가 없어요. 아무리 소액 연습이라도 1분당 거래대금이 40억 원 전후 이상 꾸준히 터지는 주도주로만 훈련해야 매매 습관이 제대로 잡힙니다. 매매할 주도주가 없을 때는 수익을 낼 수 없는 시장임을 인정하고 관망해 주세요.",
         src: [SRC.qa3, SRC.qa6] };
+    },
+
+    function openingRush(x) {
+      const timed = x.done.filter(t => t.fx && t.fx.entryTime && !t.fx.overnight);
+      if (timed.length < 10) return null;
+      const early = timed.filter(t => t.fx.entryTime >= "09:00" && t.fx.entryTime < "09:10");
+      const pre = timed.filter(t => t.fx.entryTime < "09:00");
+      const rest = timed.filter(t => t.fx.entryTime >= "09:10");
+      const e = group(early), p = group(pre), r = group(rest);
+      const bad = (early.length >= 4 && e.exp < 0 && e.exp < r.exp) || (pre.length >= 4 && p.exp < 0);
+      if (!bad) {
+        if (early.length >= 4 && e.exp > 0 && e.exp > r.exp) return { tone: "good", w: 3, title: "장 초반 매매가 잘 맞고 있어요",
+          mine: `09:00~09:09 진입 ${early.length}건 건당 ${won(e.exp)}, 그 뒤 진입 ${rest.length}건 건당 ${won(r.exp)}.`,
+          principle: "전날 강한 종목의 흐름이 장 초반에 이어지는 경우는 예외라고 했어요. 지금 잘 되는 장 초반 매매가 그런 종목 위주인지 확인하면서 이어가 주세요.", src: [SRC.desk] };
+        return null;
+      }
+      const parts = [];
+      if (pre.length >= 4) parts.push(`NXT 프리장(9시 전) 진입 ${pre.length}건 건당 ${won(p.exp)}`);
+      if (early.length >= 4) parts.push(`09:00~09:09 진입 ${early.length}건 승률 ${pct(e.wr)}, 건당 ${won(e.exp)}`);
+      parts.push(`09:10 이후 진입 ${rest.length}건 건당 ${won(r.exp)}`);
+      return { tone: "warn", w: 6 + Math.min(3, (early.length + pre.length) / 10), title: "장 시작 직후에 서둘러 들어가고 있어요",
+        mine: parts.join(" · ") + ".",
+        principle: "장 초반 매매는 방향성이 확실하지 않아서 대부분 급락합니다(전날 강한 종목의 흐름이 이어지는 경우는 예외). NXT 프리장은 변동성이 오락가락하고 거래대금이 작아 돌파 매매를 지양하고, 정규장 09:00~12:00 중심으로 거래대금 쏠림을 확인한 뒤 들어가 주세요.",
+        src: [SRC.desk, SRC.qa3] };
     },
 
     function gradeProcess(x) {
