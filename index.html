@@ -244,12 +244,18 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .news-list .pin{grid-row:1/3;grid-column:3;align-self:center;border:1px solid var(--line-strong);background:var(--surface);border-radius:999px;font-size:11.5px;padding:2px 9px;cursor:pointer;color:var(--muted);white-space:nowrap}
 .news-list .pin[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
 .refs{display:flex;flex-direction:column;gap:10px}
-.ref{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:10px 12px;background:var(--surface)}
-.ref a.ref-title{color:var(--ink);font-weight:600;font-size:14px;line-height:1.45;text-decoration:none;word-break:break-all}
+.ref{border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:12px 14px;background:var(--surface);display:flex;flex-direction:column;gap:8px}
+.ref-top{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start}
+.ref-top.has-img{grid-template-columns:minmax(0,1fr) 112px}
+.ref-thumb{width:112px;height:74px;object-fit:cover;border-radius:6px;background:var(--surface-2);border:1px solid var(--line)}
+.ref a.ref-title{color:var(--ink);font-weight:600;font-size:14.5px;line-height:1.45;text-decoration:none;word-break:keep-all;overflow-wrap:anywhere}
 .ref a.ref-title:hover{text-decoration:underline}
-.ref .ref-meta{grid-column:1;font-size:12px;color:var(--faint)}
-.ref .ref-x{grid-row:1;grid-column:2;align-self:start}
-.ref textarea{grid-column:1/3;min-height:38px;resize:vertical;font-size:13px}
+.ref-sum{font-size:13px;color:var(--muted);line-height:1.6;margin-top:4px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ref-meta{font-size:12px;color:var(--faint);margin-top:4px}
+.ref-acts{display:flex;gap:6px;flex-wrap:wrap}
+.ref-body{max-height:360px;overflow:auto;white-space:pre-wrap;font-size:13.5px;line-height:1.75;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overscroll-behavior:contain}
+.ref textarea{min-height:38px;resize:vertical;font-size:13px}
+@media (max-width:560px){.ref-top.has-img{grid-template-columns:minmax(0,1fr) 84px}.ref-thumb{width:84px;height:58px}}
 .ref-form{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr) auto;gap:8px}
 @media (max-width:560px){.ref-form{grid-template-columns:minmax(0,1fr)}}
 .news-list li:first-child{border-top:0}
@@ -790,22 +796,39 @@ function togglePin(x) {
   if (!sheet) return; const d = sheet.draft; d.newsRefs = d.newsRefs || [];
   const k = refKey(x), at = d.newsRefs.findIndex(r => refKey(r) === k);
   if (at >= 0) d.newsRefs.splice(at, 1);
-  else { d.newsRefs.push({ t: x.t || "", title: x.title, press: x.press || "", url: x.url || "", note: "", after: !!x.after }); toast("참고한 뉴스에 붙였어요"); }
+  else { d.newsRefs.push({ t: x.t || "", title: x.title, press: x.press || "", url: x.url || "", sum: x.sum || "", img: x.img || "", note: "", after: !!x.after }); toast("참고한 뉴스에 붙였어요"); }
   renderRefs(); syncPins();
 }
 function syncPins() {
   const refs = new Set((sheet?.draft.newsRefs || []).map(refKey));
   document.querySelectorAll("#sh-news [data-pin]").forEach(b => { const li = b.closest("li"), a = li.querySelector("a"); const on = refs.has(a.getAttribute("href")) || refs.has(a.textContent); b.setAttribute("aria-pressed", on); b.textContent = on ? "붙임" : "참고"; });
 }
-function renderRefs() {
+const artCache = new Map();
+async function loadArticles(urls) {
+  const need = [...new Set(urls)].filter(u => u && !artCache.get(u)); if (!need.length) return;
+  try { const r = await sb.from("articles").select("url, data").in("url", need); if (!r.error) { need.forEach(u => artCache.set(u, null)); r.data.forEach(x => artCache.set(x.url, x.data)); } } catch {}
+}
+function renderRefs(fetched) {
   const box = $("#refList"); if (!box || !sheet) return; const refs = sheet.draft.newsRefs || [];
-  box.innerHTML = refs.length ? refs.map((r, i) => `<div class="ref">
-      <a class="ref-title" ${r.url ? `href="${esc(r.url)}" target="_blank" rel="noopener"` : ""}>${esc(r.title)}</a>
-      <button type="button" class="btn sm ref-x" data-unref="${i}">빼기</button>
-      <div class="ref-meta">${[r.press, r.t ? r.t.slice(5) : "", r.after ? "진입 후 기사" : ""].filter(Boolean).map(esc).join(" · ")}</div>
-      <textarea class="inp" data-refnote="${i}" placeholder="이 기사에서 본 것 · 재료의 크기, 처음 나온 재료인지, 시장이 어떻게 반응했는지">${esc(r.note || "")}</textarea></div>`).join("")
+  if (!fetched && refs.some(r => r.url && !artCache.get(r.url))) loadArticles(refs.map(r => r.url)).then(() => sheet && sheet.draft.newsRefs === refs && renderRefs(true));
+  const open = new Set([...box.querySelectorAll(".ref-body:not([hidden])")].map(e => e.dataset.u));
+  box.innerHTML = refs.length ? refs.map((r, i) => {
+    const art = r.url ? artCache.get(r.url) : null, img = art?.img || r.img || "", sum = art?.desc || r.sum || (art?.body || "").slice(0, 200);
+    const pending = r.url && !art && artCache.has(r.url), body = art?.body || "";
+    return `<div class="ref">
+      <div class="ref-top ${img ? "has-img" : ""}"><div style="min-width:0">
+        <a class="ref-title" ${r.url ? `href="${esc(r.url)}" target="_blank" rel="noopener"` : ""}>${esc(r.title)}</a>
+        ${sum ? `<div class="ref-sum">${esc(sum)}</div>` : ""}
+        <div class="ref-meta">${[r.press || art?.press, (r.t || art?.t || "").slice(5), r.after ? "진입 후 기사" : ""].filter(Boolean).map(esc).join(" · ")}</div></div>
+        ${img ? `<img class="ref-thumb" src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}</div>
+      <div class="ref-acts">
+        ${body ? `<button type="button" class="btn sm" data-body="${i}">${open.has(r.url) ? "본문 접기" : "본문 보기"}</button>` : r.url ? `<span class="muted" style="font-size:12px;align-self:center">${pending ? "본문은 저장 후 매시 10분·40분쯤 가져와요" : art?.status === "error" ? "본문을 못 가져왔어요. 제목을 눌러 원문에서 보세요" : ""}</span>` : ""}
+        <span style="flex:1"></span><button type="button" class="btn sm" data-unref="${i}">빼기</button></div>
+      ${body ? `<div class="ref-body" data-u="${esc(r.url)}" ${open.has(r.url) ? "" : "hidden"}>${esc(body)}</div>` : ""}
+      <textarea class="inp" data-refnote="${i}" placeholder="이 기사에서 본 것 · 재료의 크기, 처음 나온 재료인지, 시장이 어떻게 반응했는지">${esc(r.note || "")}</textarea></div>`; }).join("")
     : `<div class="mkt-empty">위 관련 뉴스에서 '참고'를 누르면 여기에 붙어요. 목록에 없는 기사는 '링크 직접 추가'로 넣으세요.</div>`;
   box.querySelectorAll("[data-unref]").forEach(b => b.onclick = () => { refs.splice(+b.dataset.unref, 1); renderRefs(); syncPins(); });
+  box.querySelectorAll("[data-body]").forEach(b => b.onclick = () => { const el = b.closest(".ref").querySelector(".ref-body"); el.hidden = !el.hidden; b.textContent = el.hidden ? "본문 보기" : "본문 접기"; });
   box.querySelectorAll("[data-refnote]").forEach(t => { t.oninput = () => { refs[+t.dataset.refnote].note = t.value; }; }); autosizeAll(box);
 }
 function refAddForm() {
@@ -1095,6 +1118,9 @@ async function buildChartPdf(trades, onProgress) {
       y += 4; text("참고한 뉴스", "700", 21, "#1C4F8C");
       for (const r of t.newsRefs) {
         text(`· ${r.t ? r.t.slice(5) + " " : ""}${r.title}${r.press ? " [" + r.press + "]" : ""}${r.after ? " (진입 후 기사)" : ""}`, "600", 20, "#121821", 1.4);
+        if (r.url) await loadArticles([r.url]);
+        const art = r.url ? artCache.get(r.url) : null, sm = art?.desc || r.sum || "";
+        if (sm) text("   " + sm.slice(0, 220), "400", 18, "#5A6577", 1.45);
         if ((r.note || "").trim()) text("   → " + r.note.trim(), "400", 20, "#121821", 1.5);
       }
     }
@@ -1777,7 +1803,7 @@ async function saveTrade() {
   const body = { reasonHtml: d.reasonHtml || "", memoHtml: d.memoHtml || "", code: d.code || "", broker: d.broker || null, importKey: d.importKey || null, imported: !!d.imported, date: d.date, name: d.name, type: d.type || "", mood: d.mood || "", reason: d.reason || "",
     buy: d.buy ?? null, sell: d.sell ?? null, qty: d.qty ?? null, stop: d.stop ?? null, stopKept: d.stopKept || "", grade: d.grade ? +d.grade : null,
     mistakes: d.mistakes || [], memo: d.memo || "", lesson: d.lesson || "",
-    newsRefs: (d.newsRefs || []).map(r => ({ t: r.t || "", title: r.title || "", press: r.press || "", url: r.url || "", note: r.note || "", after: !!r.after })),
+    newsRefs: (d.newsRefs || []).map(r => ({ t: r.t || "", title: r.title || "", press: r.press || "", url: r.url || "", sum: r.sum || "", img: r.img || "", note: r.note || "", after: !!r.after })),
     photos: d.photos.map(p => ({ asset: p.asset, title: p.title || "", note: p.note || "", noteHtml: p.noteHtml || "", marks: p.marks || [] })),
     createdAt: d.createdAt || Date.now(), updatedAt: Date.now() };
   $("#sh-save").disabled = true;

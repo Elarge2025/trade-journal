@@ -61,9 +61,9 @@ def sb_get(path):
         start += 1000
 
 
-def sb_upsert(rows):
+def sb_upsert(rows, table="news", conflict="key"):
     for i in range(0, len(rows), 100):
-        req = urllib.request.Request(f"{sb_url()}/rest/v1/news?on_conflict=key", method="POST",
+        req = urllib.request.Request(f"{sb_url()}/rest/v1/{table}?on_conflict={conflict}", method="POST",
                                      data=json.dumps(rows[i:i + 100], ensure_ascii=False).encode(),
                                      headers=sb_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}))
         try:
@@ -126,6 +126,13 @@ def to_dt(s):
 TITLE_K = ("title", "titleText", "headline")
 TIME_K = ("datetime", "dateTime", "createdAt", "publishedAt", "regDate", "writtenAt", "date", "pubDate")
 PRESS_K = ("officeName", "cpKorName", "cpName", "press", "source", "providerName")
+SUM_K = ("body", "summary", "description", "content", "subContent")
+IMG_K = ("imageOriginLink", "thumbnailUrl", "imageUrl", "thumbnail", "image")
+
+
+def plain(x, n=None):
+    t = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", str(x or "")))).strip()
+    return t[:n] if n else t
 
 
 def parse_items(data, url_of):
@@ -137,8 +144,15 @@ def parse_items(data, url_of):
             dk = next((k for k in TIME_K if o.get(k)), None)
             t = to_dt(o.get(dk)) if dk else None
             if tk and t:
-                items.append({"t": t, "title": html.unescape(re.sub(r"<[^>]+>", "", o[tk])).strip(),
-                              "press": next((str(o[k]) for k in PRESS_K if o.get(k)), ""), "url": url_of(o)})
+                it = {"t": t, "title": html.unescape(re.sub(r"<[^>]+>", "", o[tk])).strip(),
+                      "press": next((str(o[k]) for k in PRESS_K if o.get(k)), ""), "url": url_of(o)}
+                sm = next((plain(o[k], 220) for k in SUM_K if isinstance(o.get(k), str) and o.get(k).strip()), "")
+                im = next((str(o[k]) for k in IMG_K if isinstance(o.get(k), str) and o.get(k).startswith("http")), "")
+                if sm:
+                    it["sum"] = sm
+                if im:
+                    it["img"] = im
+                items.append(it)
                 return
             for v in o.values():
                 walk(v)
@@ -224,6 +238,84 @@ def code_news(code, since):
     return items, src, oldest < since
 
 
+# ---------- 참고한 기사 본문 ----------
+def meta(txt, *names):
+    for n in names:
+        m = re.search(r'<meta[^>]+(?:property|name)=["\']%s["\'][^>]*content=["\']([^"\']*)' % re.escape(n), txt, re.I) \
+            or re.search(r'<meta[^>]+content=["\']([^"\']*)["\'][^>]*(?:property|name)=["\']%s["\']' % re.escape(n), txt, re.I)
+        if m and m.group(1).strip():
+            return html.unescape(m.group(1)).strip()
+    return ""
+
+
+def block_text(h):
+    h = re.sub(r"(?is)<(script|style|noscript|button|figcaption)[^>]*>.*?</\1>", " ", h)
+    h = re.sub(r"(?is)<em[^>]*class=[\"'][^\"']*img_desc[^\"']*[\"'][^>]*>.*?</em>", " ", h)
+    h = re.sub(r"(?i)<br\s*/?>", "\n", h)
+    h = re.sub(r"(?i)</(p|div|h\d|li|tr)>", "\n", h)
+    t = html.unescape(re.sub(r"<[^>]+>", " ", h))
+    lines = [re.sub(r"[ \t\u00a0]+", " ", ln).strip() for ln in t.split("\n")]
+    out, blank = [], 0
+    for ln in lines:
+        if ln:
+            out.append(ln); blank = 0
+        elif out and not blank:
+            out.append(""); blank = 1
+    return "\n".join(out).strip()
+
+
+def fetch_article(url):
+    """기사 페이지에서 제목·요약·대표 사진·본문을 뽑음. 네이버 뉴스는 본문(dic_area), 그 외는 <p> 모음."""
+    txt = fetch(url, referer="https://www.naver.com/")
+    if "charset=euc-kr" in txt[:3000].lower() and "\ufffd" in txt:
+        txt = fetch(url, enc="euc-kr", referer="https://www.naver.com/")
+    data = {"title": meta(txt, "og:title", "twitter:title"), "desc": meta(txt, "og:description", "description", "twitter:description"),
+            "img": meta(txt, "og:image", "twitter:image"), "press": meta(txt, "og:article:author", "twitter:creator", "og:site_name")}
+    m = re.search(r'data-date-time="([\d\- :]+)"', txt)
+    if m:
+        data["t"] = m.group(1)[:16]
+    body = ""
+    m = re.search(r'(?is)<article[^>]*id="dic_area"[^>]*>(.*?)</article>', txt) or re.search(r'(?is)id="dic_area"[^>]*>(.*?)</div>\s*</div>', txt)
+    if m:
+        body = block_text(m.group(1))
+    if not body:
+        scope = re.search(r"(?is)<article[^>]*>(.*?)</article>", txt)
+        ps = [plain(p) for p in re.findall(r"(?is)<p[^>]*>(.*?)</p>", scope.group(1) if scope else txt)]
+        body = "\n\n".join(p for p in ps if len(p) > 30)
+    data["body"] = body[:20000]
+    return data
+
+
+def run_articles(now, trades, dry):
+    have = sb_get("articles?select=url,data")
+    if have is None:
+        print("articles 표가 없어 본문 가져오기는 건너뜀 (setup.sql 맨 아래 실행 필요)")
+        return
+    have = {r["url"]: r["data"] for r in have}
+    urls = []
+    for t in trades:
+        for r in t["doc"].get("newsRefs") or []:
+            u = (r.get("url") or "").strip()
+            old = have.get(u)
+            if u.startswith("http") and u not in urls and (not old or (old.get("status") == "error" and old.get("fetchedAt", "") < (now - dt.timedelta(hours=12)).isoformat())):
+                urls.append(u)
+    print(f"참고한 기사 본문: 이번에 가져올 것 {len(urls)}")
+    rows = []
+    for u in urls[:150]:
+        try:
+            d = fetch_article(u)
+            d["status"] = "ok" if d["body"] or d["desc"] else "nobody"
+            print(f"- {u} · 본문 {len(d['body'])}자")
+        except Exception as e:
+            d = {"status": "error", "error": str(e)[:200]}
+            print(f"- {u} · 실패: {e}")
+        d["fetchedAt"] = now.isoformat()
+        rows.append({"url": u, "data": d, "updated_at": now.isoformat()})
+        time.sleep(0.3)
+    if rows and not dry:
+        sb_upsert(rows, table="articles", conflict="url")
+
+
 def prev_trading_day(date, market_dates):
     earlier = [d for d in market_dates if d < date]
     if earlier and (dt.date.fromisoformat(date) - dt.date.fromisoformat(earlier[-1])).days <= 6:
@@ -253,6 +345,10 @@ def pick(items, frm, to):
 
 def run(a):
     now = dt.datetime.now(KST)
+    if a.article:
+        d = fetch_article(a.article)
+        print(json.dumps({k: (v[:300] + "…" if isinstance(v, str) and len(v) > 300 else v) for k, v in d.items()}, ensure_ascii=False, indent=1))
+        return
     if a.test:
         code, date = clean_code(a.test[0]) or lookup_code(a.test[0]), a.test[1]
         print(f"종목코드: {code or '못 찾음'}")
@@ -268,6 +364,9 @@ def run(a):
     trades = sb_get("trades?select=doc") or []
     fills = sb_get("fills?select=doc") or []
     market = sorted(r["date"] for r in (sb_get("market_days?select=date") or []))
+    run_articles(now, trades, a.dry_run)  # 내가 고른 기사 본문 먼저 (빨리 끝남)
+    if a.articles_only:
+        return
     have = sb_get("news?select=key,data")
     if have is None:
         sys.exit("Supabase에 news 표가 없어요. setup.sql의 news 부분을 SQL Editor에서 먼저 실행해 주세요.")
@@ -328,5 +427,7 @@ if __name__ == "__main__":
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int, default=400)
+    ap.add_argument("--articles-only", action="store_true")
+    ap.add_argument("--article", help="기사 주소 하나만 확인")
     ap.add_argument("--test", nargs=2, metavar=("CODE_OR_NAME", "DATE"))
     run(ap.parse_args())

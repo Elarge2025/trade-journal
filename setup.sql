@@ -92,3 +92,13 @@ create table if not exists public.news (
 alter table public.news enable row level security;
 drop policy if exists "read news" on public.news;
 create policy "read news" on public.news for select to authenticated using (true);
+
+-- 참고한 기사 본문 (복기에 붙인 기사만, GitHub Actions가 매시 10분·40분에 채움). key = 기사 주소
+create table if not exists public.articles (
+  url text primary key,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.articles enable row level security;
+drop policy if exists "read articles" on public.articles;
+create policy "read articles" on public.articles for select to authenticated using (true);

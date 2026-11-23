@@ -2,11 +2,12 @@ name: 종목 뉴스 기록
 
 on:
   schedule:
-    - cron: "10 * * * *"   # 매시 10분
+    - cron: "10 * * * *"   # 매시 10분: 참고한 기사 본문 + 종목 뉴스
+    - cron: "40 * * * *"   # 매시 40분: 참고한 기사 본문만
   workflow_dispatch:
     inputs:
       test:
-        description: "확인만: '종목코드또는이름 날짜' (예: 005930 2026-11-20). 비우면 평소처럼 실행"
+        description: "확인만: '종목코드또는이름 날짜' (예: 005930 2026-11-20) 또는 기사 주소. 비우면 평소처럼 실행"
         default: ""
       force:
         description: "이미 가져온 것도 전부 다시"
@@ -18,7 +19,7 @@ on:
         default: false
 
 concurrency:
-  group: news
+  group: news-${{ github.event.schedule == '40 * * * *' && 'articles' || 'main' }}
   cancel-in-progress: false
 
 jobs:
@@ -37,5 +38,7 @@ jobs:
           TEST: ${{ inputs.test }}
           PYTHONUNBUFFERED: "1"
         run: |
+          if [[ "$TEST" == http* ]]; then python scripts/news.py --article "$TEST"; exit 0; fi
           if [ -n "$TEST" ]; then python scripts/news.py --test $TEST; exit 0; fi
+          if [ "${{ github.event.schedule }}" = "40 * * * *" ]; then python scripts/news.py --articles-only; exit 0; fi
           python scripts/news.py ${{ inputs.force && '--force' || '' }} ${{ inputs.dry_run && '--dry-run' || '' }}
