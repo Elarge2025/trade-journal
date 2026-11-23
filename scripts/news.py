@@ -271,6 +271,7 @@ def fetch_article(url):
         txt = fetch(url, enc="euc-kr", referer="https://www.naver.com/")
     data = {"title": meta(txt, "og:title", "twitter:title"), "desc": meta(txt, "og:description", "description", "twitter:description"),
             "img": meta(txt, "og:image", "twitter:image"), "press": meta(txt, "og:article:author", "twitter:creator", "og:site_name")}
+    data["press"] = re.sub(r"\s*[|｜:]\s*(네이버|NAVER|naver)\s*$", "", data["press"]).strip()
     m = re.search(r'data-date-time="([\d\- :]+)"', txt)
     if m:
         data["t"] = m.group(1)[:16]
