@@ -729,10 +729,13 @@ function coachSection(all) {
         <div class="src">근거 · ${esc(it.src.join(" / "))}</div></article>`).join("")}</div>` : ""}
     <div class="ai-box">
       <div class="acts"><b style="margin-right:auto">AI로 깊게 분석하기</b>
+        <button class="btn primary" type="button" id="aiCopy">분석 자료 복사 · 무료</button>
+        <button class="btn" type="button" id="aiPaste">Claude 답변 저장</button></div>
+      <p class="coach-note" style="margin:6px 0 0">무료: 복사한 뒤 claude.ai의 <b>트레이딩</b> 프로젝트에서 새 채팅을 열고 붙여넣으세요. 미모사 원본 자료 전체를 근거로 분석해 줘요. 답변을 복사해 'Claude 답변 저장'에 붙여넣으면 여기에 기록이 남아요.</p>
+      <div class="acts" style="margin-top:10px"><span class="muted" style="font-size:12.5px;margin-right:auto">API 키를 등록했다면 바로 분석 (유료)</span>
         <button class="btn" type="button" data-ai="fast" ${aiBusy?"disabled":""}>빠르게 · 약 10원</button>
-        <button class="btn primary" type="button" data-ai="deep" ${aiBusy?"disabled":""}>꼼꼼하게 · 약 150원</button></div>
-      <p class="coach-note" style="margin:6px 0 0">선택한 기간의 매매 숫자, 복기 글, 사진 설명, 그날 시장, 주간 교정 기록을 읽고 미모사 원칙에 비춰 진단해요. 비용은 내 Anthropic API 계정에서 나가요.</p>
-      ${aiBusy ? `<div class="ai-report">분석하는 중이에요. 30초~1분쯤 걸려요…</div>` : rep ? `<div class="ai-report">${mdLite(rep.text)}<div class="ai-meta">${esc(new Date(rep.created_at).toLocaleString("ko-KR"))} · ${esc(rep.model === "deep" ? "꼼꼼하게" : "빠르게")} · ${esc((PERIODS.find(p => p[0] === rep.period) || [,"전체"])[1])}</div></div>` : ""}
+        <button class="btn" type="button" data-ai="deep" ${aiBusy?"disabled":""}>꼼꼼하게 · 약 150원</button></div>
+      ${aiBusy ? `<div class="ai-report">분석하는 중이에요. 30초~1분쯤 걸려요…</div>` : rep ? `<div class="ai-report">${mdLite(rep.text)}<div class="ai-meta">${esc(new Date(rep.created_at).toLocaleString("ko-KR"))} · ${esc(({ deep: "꼼꼼하게", fast: "빠르게", chat: "claude.ai 채팅" })[rep.model] || "")} · ${esc((PERIODS.find(p => p[0] === rep.period) || [,"전체"])[1])}</div></div>` : ""}
       ${state.coachReports.length > 1 ? `<div class="ai-hist">${state.coachReports.map(x => `<button type="button" data-rep="${esc(x.id)}" aria-pressed="${(rep && rep.id) === x.id}">${esc(new Date(x.created_at).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }))}</button>`).join("")}</div>` : ""}
     </div></section>`;
 }
@@ -753,6 +756,62 @@ function coachPayload(all) {
     규칙진단: window.TJCoach ? TJCoach.analyze(list, state.market).items.map(i => ({ 구분: i.tone, 제목: i.title, 근거: i.mine })) : [],
     주간교정: [...state.weeks].sort((a, b) => (a.week||"").localeCompare(b.week||"")).slice(-6).map(w => ({ 주: w.week, 가장비싼실수: w.worst, 목표: w.goal, 지켰나: w.kept }))
   };
+}
+function chatPrompt(all) {
+  const data = coachPayload(all);
+  return `아래는 내 매매 복기노트 기록이야. 이 프로젝트에 있는 미모사 강의 자료(강사 공지, 컬러미모사 특강, 1~6강 Q&A, 미모사 매매일지)를 근거로 내 매매를 진단해줘.
+
+- 말투는 미모사 강의 글처럼: 존댓말, 따뜻하지만 원칙에는 단호하게. 단, 미모사 본인인 척은 하지 말고 원칙을 인용할 땐 어느 자료인지 밝혀줘.
+- 모든 주장에 내 숫자(건수, 금액, 승률, 날짜, 종목)를 붙여줘. 표본이 적으면 그렇다고 말해줘.
+- 결과보다 과정(원칙 준수, 손절, 비중, 시장 판단)을 평가해줘. 특정 종목을 사라/팔라는 말은 빼줘.
+- 미모사 매매일지와 비교해서, 미모사가 매매하던 시장 상황·종목 선택·비중과 내가 다른 점이 보이면 짚어줘.
+
+형식 (아래 제목 그대로):
+## 지금 나는 이렇게 매매하고 있어요
+## 잘하고 있는 점
+## 가장 먼저 고칠 것 (각 항목: 제목 / 내 기록 / 강의 원칙과 출처 / 다음 주 구체적 행동)
+## 다음 주 행동강령 (모니터 옆에 붙일 짧은 문장 3~5개)
+## 한마디
+
+[내 기록 · ${data.기간}]
+${JSON.stringify(data)}`;
+}
+function textModal(title, body, value, okText, onOk) {
+  const w = document.createElement("div"); w.className = "modal-wrap";
+  w.innerHTML = `<div class="modal" role="dialog" aria-modal="true" style="max-width:620px;display:flex;flex-direction:column;gap:10px">
+    <h2>${esc(title)}</h2><p style="margin:0">${body}</p>
+    <textarea class="inp" id="tm-text" style="min-height:260px;font-size:12.5px;resize:vertical;overflow:auto"></textarea>
+    <div class="acts"><button class="btn" type="button" data-a="no">닫기</button>${okText ? `<button class="btn primary" type="button" data-a="ok">${esc(okText)}</button>` : ""}</div></div>`;
+  document.body.appendChild(w);
+  const ta = w.querySelector("#tm-text"); ta.value = value || "";
+  if (value) { ta.focus(); ta.select(); } else ta.focus();
+  w.addEventListener("click", async e => {
+    if (e.target === w) return w.remove();
+    const a = e.target.closest("[data-a]"); if (!a) return;
+    if (a.dataset.a === "no") return w.remove();
+    if (a.dataset.a === "ok" && await onOk(ta.value)) w.remove();
+  });
+}
+async function copyForChat() {
+  const list = enriched();
+  if (!periodList(list, state.coachPeriod).some(t => t.c)) { toast("이 기간에는 분석할 매매가 없어요"); return; }
+  const text = chatPrompt(list);
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("복사했어요. claude.ai 트레이딩 프로젝트의 새 채팅에 붙여넣으세요");
+  } catch {
+    textModal("분석 자료", "자동 복사가 안 돼서 아래 글을 직접 복사해 주세요 (Ctrl+A → Ctrl+C).", text);
+  }
+}
+function pasteReport() {
+  textModal("Claude 답변 저장", "claude.ai 채팅에서 받은 분석 답변을 그대로 붙여넣으세요.", "", "저장", async v => {
+    if (!v.trim()) { toast("붙여넣은 내용이 없어요"); return false; }
+    const row = { user_id: api.uid(), model: "chat", period: state.coachPeriod, text: v.trim() };
+    const ins = await sb.from("coach_reports").insert(row).select("id, created_at, model, period, text").single();
+    if (ins.error) { toast("저장하지 못했어요. Supabase에 coach_reports 표를 만들었는지 확인해 주세요"); return false; }
+    state.coachReports = [ins.data, ...state.coachReports].slice(0, 12); aiView = ins.data.id; render(); toast("저장했어요");
+    return true;
+  });
 }
 async function runAI(mode) {
   if (aiBusy) return;
@@ -778,6 +837,8 @@ async function runAI(mode) {
 document.addEventListener("click", e => {
   const pb = e.target.closest("#coachPeriod button");
   if (pb) { state.coachPeriod = pb.dataset.v; try { localStorage.setItem("tj-coach-period", state.coachPeriod); } catch {} render(); return; }
+  if (e.target.closest("#aiCopy")) { copyForChat(); return; }
+  if (e.target.closest("#aiPaste")) { pasteReport(); return; }
   const ab = e.target.closest("[data-ai]"); if (ab) { runAI(ab.dataset.ai); return; }
   const hb = e.target.closest("[data-rep]"); if (hb) { aiView = hb.dataset.rep; render(); }
 });
