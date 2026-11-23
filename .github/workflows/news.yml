@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       test:
-        description: "확인만: '종목코드또는이름 날짜' (예: 005930 2026-11-20) 또는 기사 주소. 비우면 평소처럼 실행"
+        description: "확인만: '종목코드또는이름 날짜' (예: 005930 2026-11-20) 또는 기사 주소, 또는 'us 티커'(예: us TSLA). 비우면 평소처럼 실행"
         default: ""
       force:
         description: "이미 가져온 것도 전부 다시"
@@ -31,6 +31,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: 미국 시세 (지수·종목별 관련주)
+        continue-on-error: true
+        env:
+          SUPABASE_URL: https://qayneaypdazflrvwcphs.supabase.co
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          TEST: ${{ inputs.test }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          if [[ "$TEST" == us\ * ]]; then python scripts/us.py --test "${TEST#us }"; exit 0; fi
+          if [ -n "$TEST" ]; then exit 0; fi
+          python scripts/us.py
       - name: 뉴스 가져와서 저장
         env:
           SUPABASE_URL: https://qayneaypdazflrvwcphs.supabase.co
@@ -38,6 +49,7 @@ jobs:
           TEST: ${{ inputs.test }}
           PYTHONUNBUFFERED: "1"
         run: |
+          if [[ "$TEST" == us\ * ]]; then exit 0; fi
           if [[ "$TEST" == http* ]]; then python scripts/news.py --article "$TEST"; exit 0; fi
           if [ -n "$TEST" ]; then python scripts/news.py --test $TEST; exit 0; fi
           if [ "${{ github.event.schedule }}" = "40 * * * *" ]; then python scripts/news.py --articles-only; exit 0; fi

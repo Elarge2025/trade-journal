@@ -239,6 +239,13 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .mkt-flow small{display:block;font-size:11px;color:var(--muted)}
 .mkt-flow .num{font-size:12.5px;font-weight:600}
 .mkt-empty{font-size:12.5px;color:var(--muted)}
+.us-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.us-row + .us-row{margin-top:8px}
+.us-lab{font-size:11.5px;font-weight:700;color:var(--muted);letter-spacing:.03em;min-width:64px}
+.us-chip{display:inline-flex;align-items:baseline;gap:6px;border:1px solid var(--line);border-radius:8px;padding:3px 9px;font-size:13px;background:var(--surface)}
+.us-chip small{font-size:11.5px;color:var(--muted)}
+.us-edit{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.us-edit .inp{flex:1 1 200px;min-width:0}
 .news-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .news-list li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 10px;padding:6px 0;border-top:1px solid var(--line)}
 .news-list .pin{grid-row:1/3;grid-column:3;align-self:center;border:1px solid var(--line-strong);background:var(--surface);border-radius:999px;font-size:11.5px;padding:2px 9px;cursor:pointer;color:var(--muted);white-space:nowrap}
@@ -440,7 +447,7 @@ const PHOTO_PROMPTS = [
   {title:"매도 · 기타", q:"왜 여기서 팔았나 · 다시 보면 당시 가능했던 더 나은 판단은?"}
 ];
 
-const state = { fills: [], fx: new Map(), coachReports: [], coachPeriod: (() => { try { return localStorage.getItem("tj-coach-period") || "90"; } catch { return "90"; } })(), market: new Map(), trades: [], weeks: [], cfg: {...DEFAULTS}, loaded: false, readOnly: false };
+const state = { us: new Map(), fills: [], fx: new Map(), coachReports: [], coachPeriod: (() => { try { return localStorage.getItem("tj-coach-period") || "90"; } catch { return "90"; } })(), market: new Map(), trades: [], weeks: [], cfg: {...DEFAULTS}, loaded: false, readOnly: false };
 let sb = null, session = null;
 const urlCache = new Map();
 const api = {
@@ -466,6 +473,7 @@ const api = {
     state.weeks = w.data.map(r => ({ id: r.id, ...r.doc }));
     try { const cr = await sb.from("coach_reports").select("id, created_at, model, period, text").order("created_at", { ascending: false }).limit(12); if (!cr.error) state.coachReports = cr.data; } catch {}
     try { const m = await sb.from("market_days").select("date, data").order("date", { ascending: false }).limit(2000); if (!m.error) state.market = new Map(m.data.map(r => [r.date, r.data])); } catch {}
+    try { const u = await sb.from("us_prices").select("sym, data"); if (!u.error) state.us = new Map(u.data.map(r => [r.sym, r.data])); } catch {}
     applyCfg(s.data?.doc || {});
   },
   async saveTrade(id, doc) { const { error } = await sb.from("trades").upsert({ id, user_id: api.uid(), doc, updated_at: new Date().toISOString() }); if (error) throw error; },
@@ -496,7 +504,8 @@ async function fillImages(root) {
 }
 function applyCfg(c) {
   state.cfg = { fee: typeof c.fee === "number" ? c.fee : DEFAULTS.fee, tax: typeof c.tax === "number" ? c.tax : DEFAULTS.tax,
-    types: c.types?.length ? c.types : DEFAULTS.types, moods: c.moods?.length ? c.moods : DEFAULTS.moods, mistakes: c.mistakes?.length ? c.mistakes : DEFAULTS.mistakes };
+    types: c.types?.length ? c.types : DEFAULTS.types, moods: c.moods?.length ? c.moods : DEFAULTS.moods, mistakes: c.mistakes?.length ? c.mistakes : DEFAULTS.mistakes,
+    usMap: c.usMap && typeof c.usMap === "object" ? c.usMap : {} };
 }
 async function refresh() { try { await api.loadAll(); state.loaded = true; setStatus(""); } catch (e) { setStatus("기록을 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.", true); } render(); }
 
@@ -767,6 +776,41 @@ function marketCard(date) {
   };
   return `<div class="mkt-head"><b>그날 시장</b><span>${esc(date)} · 순매수는 억원</span></div><div class="mkt-grid">${col("kospi","코스피")}${col("kosdaq","코스닥")}</div>`;
 }
+const US_IDX = [["^IXIC", "나스닥"], ["^GSPC", "S&P500"], ["^SOX", "반도체지수"]];
+const usSyms = name => (state.cfg.usMap || {})[name] || [];
+function usSession(date) {
+  const ref = state.us.get("^IXIC")?.d || state.us.get("^GSPC")?.d; if (!ref || !date) return null;
+  const ds = Object.keys(ref).filter(k => k < date).sort(); return ds[ds.length - 1] || null;
+}
+function usLine(date, name) {
+  const ud = usSession(date); if (!ud) return null;
+  const one = (sym, label) => { const v = state.us.get(sym)?.d?.[ud]; return { sym, label: label || sym, pct: v ? v[1] : null }; };
+  return { ud, idx: US_IDX.map(([s, l]) => one(s, l)), rel: usSyms(name).map(s => one(s)) };
+}
+let usShown = "";
+function renderUs(date, name, force) {
+  const box = $("#sh-us"); if (!box) return;
+  const key = date + "|" + name + "|" + usSyms(name).join(","); if (key === usShown && !force) return; usShown = key;
+  const L = usLine(date, name), wd = d => "일월화수목금토"[new Date(d + "T00:00:00").getDay()];
+  const chip = x => `<span class="us-chip"><small>${esc(x.label)}</small><b class="num ${cls(x.pct)}">${x.pct == null ? "–" : (x.pct > 0 ? "+" : "") + x.pct.toFixed(2) + "%"}</b></span>`;
+  const syms = usSyms(name);
+  box.innerHTML = `<div class="mkt-head"><b>전날 미국장</b><span>${L ? esc(L.ud) + "(" + wd(L.ud) + ") 마감 · 한국 " + esc(date || "") + " 아침 기준" : "날짜를 넣으면 그 전 미국장 등락이 나와요"}</span></div>
+    ${!date ? "" : !L ? `<div class="mkt-empty">미국 시세가 아직 없어요. Supabase에 us_prices 표를 만들면 매시 10분·40분에 채워져요.</div>` : `<div class="us-row"><span class="us-lab">지수</span>${L.idx.map(chip).join("")}</div>`}
+    ${name ? `<div class="us-row" style="margin-top:8px"><span class="us-lab">관련주</span>${L && syms.length ? L.rel.map(chip).join("") : syms.length ? syms.map(s => chip({ label: s, pct: null })).join("") : `<span class="muted" style="font-size:12.5px">${esc(name)}의 미국 관련주를 정해두면 이 종목 매매마다 나와요</span>`}
+      <button type="button" class="btn sm" id="us-edit-btn">${syms.length ? "바꾸기" : "정하기"}</button></div>
+      ${L && syms.some(s => !state.us.get(s)) ? `<div class="mkt-empty" style="margin-top:6px">새로 정한 종목 시세는 매시 10분·40분쯤 채워져요 (새로고침 후 보임).</div>` : ""}
+      <div class="us-edit" id="us-edit" hidden><input class="inp" id="us-in" placeholder="미국 티커를 쉼표로 · 예: TSLA, NVDA, ISRG" value="${esc(syms.join(", "))}" autocomplete="off"><button type="button" class="btn primary" id="us-save">저장</button></div>` : ""}`;
+  const eb = $("#us-edit-btn"); if (eb) eb.onclick = () => { const e = $("#us-edit"); e.hidden = !e.hidden; if (!e.hidden) $("#us-in").focus(); };
+  const sv = $("#us-save"); if (sv) sv.onclick = async () => {
+    const list = [...new Set($("#us-in").value.toUpperCase().split(/[\s,]+/).map(x => x.trim()).filter(Boolean))];
+    const bad = list.filter(x => !/^\^?[A-Z0-9.\-]{1,12}$/.test(x)); if (bad.length) { toast("티커를 확인해 주세요: " + bad.join(", ")); return; }
+    const map = { ...(state.cfg.usMap || {}) }; if (list.length) map[name] = list; else delete map[name];
+    sv.disabled = true;
+    try { await api.saveSettings({ ...state.cfg, usMap: map, updatedAt: Date.now() }); state.cfg.usMap = map; toast(list.length ? `${name} 관련주를 저장했어요` : "관련주를 지웠어요"); renderUs(date, name, true); }
+    catch (err) { toast(errMsg(err)); sv.disabled = false; }
+  };
+  const inp = $("#us-in"); if (inp) inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); $("#us-save").click(); } };
+}
 const newsCache = new Map();
 async function getNews(date, name) {
   const key = date + "|" + name;
@@ -973,10 +1017,11 @@ function coachPayload(all) {
   return {
     기간: (PERIODS.find(p => p[0] === state.coachPeriod) || [,"전체"])[1],
     요약: { 매매수: s.n, 승률: s.winRate, 평균수익: Math.round(s.avgW), 평균손실: Math.round(s.avgL), 손익비: s.payoff, 건당기대값: Math.round(s.exp ?? 0), 총손익: Math.round(s.total), 총비용: s.cost, 최대연속손실: s.maxRun, 손절준수율: s.stopRate },
-    매매열: ["날짜","종목","유형","평가(5최상~1최악)","순손익","수익률%","매수금액","실수","손절준수","R","코스닥등락%","코스피등락%","외국인코스닥순매수억","진입시각","청산시각","보유분(오버나이트는 -1)","자동감지물타기횟수"],
+    매매열: ["날짜","종목","유형","평가(5최상~1최악)","순손익","수익률%","매수금액","실수","손절준수","R","코스닥등락%","코스피등락%","외국인코스닥순매수억","진입시각","청산시각","보유분(오버나이트는 -1)","자동감지물타기횟수","전날나스닥%","전날반도체지수%","전날미국관련주%"],
     매매: list.slice(-250).map(t => [t.date, t.name, t.type || "", t.grade || "", Math.round(t.c.pnl), +(t.c.ret * 100).toFixed(2), Math.round(t.c.buyAmt),
       (t.mistakes || []).join("/"), t.stopKept || "", t.c.R != null ? +t.c.R.toFixed(2) : "", mk(t.date)?.kosdaq?.chgPct ?? "", mk(t.date)?.kospi?.chgPct ?? "", mk(t.date)?.flow?.kosdaq?.foreign ?? "",
-      t.fx?.entryTime || "", t.fx?.exitTime || "", t.fx ? (t.fx.overnight ? -1 : Math.round(t.fx.holdMin ?? 0)) : "", t.fx?.avgDown || ""]),
+      t.fx?.entryTime || "", t.fx?.exitTime || "", t.fx ? (t.fx.overnight ? -1 : Math.round(t.fx.holdMin ?? 0)) : "", t.fx?.avgDown || "",
+      ...(() => { const u = usLine(t.date, t.name); return u ? [u.idx[0].pct ?? "", u.idx[2].pct ?? "", u.rel.map(x => `${x.sym} ${x.pct ?? "-"}`).join("/")] : ["", "", ""]; })()]),
     복기글: list.filter(hasJournal).slice(-40).map(t => ({ 날짜: t.date, 종목: t.name, 순손익: Math.round(t.c.pnl), 평가: t.grade || "",
       진입근거: cut(t.reason, 300), 복기메모: cut(t.memo, 400), 교훈: cut(t.lesson, 150), 사진설명: (t.photos || []).map(p => cut(p.note, 250)).filter(Boolean),
       참고뉴스: (t.newsRefs || []).map(r => cut(r.title, 80) + (r.after ? " (진입 후 기사)" : "") + (r.note ? " → " + cut(r.note, 150) : "")) })),
@@ -1097,6 +1142,8 @@ async function buildChartPdf(trades, onProgress) {
       t.stop ? `계획손절 ${won(t.stop)}` : "", t.stopKept ? `손절 ${t.stopKept === "O" ? "지켰음" : "못 지켰음"}` : "", t.mood ? `시장분위기 ${t.mood}` : "",
       t.c && t.c.R != null ? `R ${rfmt(t.c.R)}` : ""].filter(Boolean).join(" · ");
     if (det) text(det, "400", 20, "#5A6577");
+    const ul = usLine(t.date, t.name);
+    if (ul) text(`전날 미국장 (${ul.ud} 마감) · ` + [...ul.idx, ...ul.rel].map(x => `${x.label} ${x.pct == null ? "–" : (x.pct > 0 ? "+" : "") + x.pct.toFixed(2) + "%"}`).join(" · "), "400", 19, "#5A6577");
     const mk = state.market.get(t.date);
     if (mk) {
       const one = (k, n) => { const x = mk[k], f = mk.flow?.[k]; if (!x) return "";
@@ -1384,7 +1431,7 @@ function renderSetup() {
     const lines = id => $(id).value.split("\n").map(s => s.trim()).filter(Boolean);
     const fee = parseFloat($("#cfg-fee").value) / 100, tax = parseFloat($("#cfg-tax").value) / 100;
     if (!(fee >= 0 && fee < 0.05) || !(tax >= 0 && tax < 0.05)) { toast("수수료율과 세율은 0~5 사이 숫자로 적어주세요"); return; }
-    const cfg = { fee, tax, types: lines("#cfg-types"), moods: lines("#cfg-moods"), mistakes: lines("#cfg-mis"), updatedAt: Date.now() };
+    const cfg = { fee, tax, types: lines("#cfg-types"), moods: lines("#cfg-moods"), mistakes: lines("#cfg-mis"), usMap: state.cfg.usMap || {}, updatedAt: Date.now() };
     try { await api.saveSettings(cfg); toast("설정을 저장했어요"); await refresh(); } catch (err) { toast(errMsg(err)); }
   };
   const ex = $("#exportCsv"); if (ex) ex.onclick = exportCsv;
@@ -1602,6 +1649,7 @@ function openTrade(id) {
       <button class="btn primary" type="button" id="sh-save">저장</button></div>
     <div class="sheet-body">
       <div class="calc" id="sh-calc"></div>
+      <div class="mkt" id="sh-us"></div>
       <div class="mkt" id="sh-news"></div>
       <div class="mkt" id="sh-mkt"></div>
       <div class="mkt" id="sh-fills" hidden></div>
@@ -1670,7 +1718,7 @@ function openTrade(id) {
     const risk = (d.buy > 0 && d.stop > 0 && d.stop < d.buy && d.qty > 0) ? (d.buy - d.stop) * d.qty : null;
     $("#sh-mkt").innerHTML = marketCard(d.date);
     const fx = state.fx.get(d.date + "|" + d.name), fb = $("#sh-fills");
-    renderNews(d.date, d.name, fx);
+    renderNews(d.date, d.name, fx); renderUs(d.date, d.name);
     fb.hidden = !fx; if (fx) fb.innerHTML = fillsCard(fx, d.date);
     $("#sh-calc").innerHTML = c ? `
       <div><small>순손익</small><span class="num big ${cls(c.pnl)}">${signed(c.pnl)}</span></div>
@@ -1685,7 +1733,7 @@ function openTrade(id) {
   };
   $(".sheet-body").addEventListener("input", sync);
   $("#t-type").addEventListener("change", sync);
-  newsShown = ""; d.newsRefs = d.newsRefs || []; sync(); renderPhotos(); renderRefs(); $("#refAdd").onclick = refAddForm; requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
+  newsShown = ""; usShown = ""; d.newsRefs = d.newsRefs || []; sync(); renderPhotos(); renderRefs(); $("#refAdd").onclick = refAddForm; requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
   sheet.original = JSON.stringify(draft);  // 처음 화면을 채우며 생긴 형식 차이는 변경으로 치지 않음
   L.querySelectorAll("[data-close]").forEach(b => b.onclick = closeTrade);
   $("#sh-save").onclick = saveTrade;

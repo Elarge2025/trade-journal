@@ -102,3 +102,13 @@ create table if not exists public.articles (
 alter table public.articles enable row level security;
 drop policy if exists "read articles" on public.articles;
 create policy "read articles" on public.articles for select to authenticated using (true);
+
+-- 미국 지수·관련주 일별 종가 (GitHub Actions가 채움). data = {d: {날짜: [종가, 등락률%]}, name}
+create table if not exists public.us_prices (
+  sym text primary key,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.us_prices enable row level security;
+drop policy if exists "read us prices" on public.us_prices;
+create policy "read us prices" on public.us_prices for select to authenticated using (true);
