@@ -801,6 +801,12 @@ function textModal(title, body, value, okText, onOk) {
   });
 }
 /* ---- 차트 PDF ---- */
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement("a"), { href: url, download: name, rel: "noopener" });
+  a.style.display = "none"; document.body.appendChild(a); a.click();
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 4000);
+}
 function loadScript(src) {
   return new Promise((res, rej) => { const el = document.createElement("script"); el.src = src; el.onload = res; el.onerror = rej; document.head.appendChild(el); });
 }
@@ -836,9 +842,14 @@ async function buildChartPdf(trades, onProgress) {
   const PW = 1240, PH = 1754, M = 64, CW = PW - M * 2;
   const font = (w, sz) => `${w} ${sz}px "IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif`;
   const pdf = new window.jspdf.jsPDF({ unit: "px", format: [PW, PH], hotfixes: ["px_scaling"], compress: true });
-  let first = true, cv, ctx, y;
+  let first = true, cv, ctx, y, imgs = [];
   const page = () => {
-    if (cv) { if (!first) pdf.addPage([PW, PH]); pdf.addImage(cv.toDataURL("image/jpeg", 0.82), "JPEG", 0, 0, PW, PH); first = false; }
+    if (cv) {
+      if (!first) pdf.addPage([PW, PH]);
+      pdf.addImage(cv.toDataURL("image/jpeg", 0.85), "JPEG", 0, 0, PW, PH); first = false;
+      for (const im of imgs) pdf.addImage(im.data, "JPEG", im.x, im.y, im.w, im.h, undefined, "FAST");
+    }
+    imgs = [];
     cv = document.createElement("canvas"); cv.width = PW; cv.height = PH; ctx = cv.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, PW, PH); ctx.textBaseline = "top"; y = M;
   };
@@ -847,7 +858,7 @@ async function buildChartPdf(trades, onProgress) {
     for (const ln of wrapLines(ctx, t, CW)) { if (y + sz * lh > PH - M) page(), ctx.font = font(w, sz), ctx.fillStyle = color; ctx.fillText(ln, M, y); y += sz * lh; }
   };
   page();
-  text("매매 복기 차트 묶음", "700", 40, "#121821"); y += 6;
+  text(trades.length === 1 ? "매매 복기" : "매매 복기 차트 묶음", "700", 40, "#121821"); y += 6;
   text(`${trades.length}건 · 만든 날 ${todayStr()} · 사진 위 표시는 내가 복기하며 그린 것`, "400", 22, "#5A6577"); y += 24;
   for (let i = 0; i < trades.length; i++) {
     const t = trades[i]; onProgress && onProgress(i + 1, trades.length);
@@ -856,6 +867,17 @@ async function buildChartPdf(trades, onProgress) {
     const g = GRADES[+t.grade] ? ` · 평가 ${GRADES[+t.grade]}` : "";
     text(`${i + 1}. ${t.date}  ${t.name}`, "700", 32, "#121821");
     text(`${t.type || "유형 없음"}${g} · 순손익 ${t.c ? signed(t.c.pnl) + "원 (" + spct(t.c.ret) + ")" : "–"}${(t.mistakes || []).length ? " · 실수: " + t.mistakes.join(", ") : ""}`, "500", 22, t.c && t.c.pnl < 0 ? "#1559C7" : "#CC1F2A");
+    const det = [t.buy ? `평균매수 ${won(t.buy)}` : "", t.sell ? `평균매도 ${won(t.sell)}` : "", t.qty ? `수량 ${won(t.qty)}주` : "",
+      t.stop ? `계획손절 ${won(t.stop)}` : "", t.stopKept ? `손절 ${t.stopKept === "O" ? "지켰음" : "못 지켰음"}` : "", t.mood ? `시장분위기 ${t.mood}` : "",
+      t.c && t.c.R != null ? `R ${rfmt(t.c.R)}` : ""].filter(Boolean).join(" · ");
+    if (det) text(det, "400", 20, "#5A6577");
+    const mk = state.market.get(t.date);
+    if (mk) {
+      const one = (k, n) => { const x = mk[k], f = mk.flow?.[k]; if (!x) return "";
+        const fl = f ? ` 개인 ${f.indiv > 0 ? "+" : ""}${Math.round(f.indiv)}억 · 외국인 ${f.foreign > 0 ? "+" : ""}${Math.round(f.foreign)}억 · 기관 ${f.inst > 0 ? "+" : ""}${Math.round(f.inst)}억` : "";
+        return `${n} ${idx(x.close)} (${x.chgPct > 0 ? "+" : ""}${x.chgPct?.toFixed(2)}%) 거래대금 ${fmtVal(x.value)}${fl}`; };
+      text("그날 시장 · " + [one("kospi", "코스피"), one("kosdaq", "코스닥")].filter(Boolean).join("  |  "), "400", 19, "#5A6577");
+    }
     if ((t.reason || "").trim()) { y += 6; text("진입근거: " + t.reason.trim(), "400", 21, "#121821"); }
     y += 10;
     for (const p of t.photos || []) {
@@ -864,7 +886,12 @@ async function buildChartPdf(trades, onProgress) {
       if (pc) { h = pc.height * (CW / pc.width); const maxH = PH - M * 2 - 120; if (h > maxH) { h = maxH; w = pc.width * (h / pc.height); } }
       if (y + 36 + h > PH - M) page();
       text(`[${p.title || "사진"}]  ${t.date} ${t.name}`, "700", 22, "#1C4F8C");
-      if (pc) { ctx.drawImage(pc, M, y, w, h); ctx.strokeStyle = "#D8DEE7"; ctx.strokeRect(M, y, w, h); y += h + 10; }
+      if (pc) {
+        let src = pc;
+        if (pc.width > 2400) { src = document.createElement("canvas"); src.width = 2400; src.height = Math.round(pc.height * 2400 / pc.width); src.getContext("2d").drawImage(pc, 0, 0, src.width, src.height); }
+        imgs.push({ data: src.toDataURL("image/jpeg", 0.93), x: M, y, w, h });
+        ctx.strokeStyle = "#D8DEE7"; ctx.strokeRect(M - 1, y - 1, w + 2, h + 2); y += h + 10;
+      }
       else text("(사진을 불러오지 못했어요)", "400", 20, "#8A94A4");
       if ((p.note || "").trim()) text(p.note.trim(), "400", 21, "#121821", 1.6);
       y += 14;
@@ -875,6 +902,19 @@ async function buildChartPdf(trades, onProgress) {
   }
   page();
   return pdf.output("blob");
+}
+async function exportTradePdf() {
+  const s = sheet; if (!s) return;
+  if (s.busy) { toast("사진 업로드가 끝나면 만들 수 있어요"); return; }
+  const t = { ...s.draft, c: calc(s.draft) };
+  if (!t.name) { toast("종목명을 먼저 적어주세요"); return; }
+  const b = $("#sh-pdf"); b.disabled = true; b.textContent = "만드는 중…";
+  try {
+    const blob = await buildChartPdf([t]);
+    saveBlob(blob, `trade_${t.date || todayStr()}${t.code ? "_" + t.code : ""}.pdf`);
+    toast(dirty() ? "PDF를 내려받았어요. 저장은 아직 안 됐으니 저장도 눌러 주세요" : "PDF를 내려받았어요");
+  } catch { toast("PDF를 만들지 못했어요. 인터넷 연결을 확인해 주세요"); }
+  finally { if (sheet === s) { b.disabled = false; b.textContent = "PDF"; } }
 }
 function chartPdfDialog() {
   const all = periodList(enriched(), state.coachPeriod).filter(t => t.c && (t.photos || []).length);
@@ -899,8 +939,7 @@ function chartPdfDialog() {
     go.disabled = true;
     try {
       const blob = await buildChartPdf(pick, (i, total) => { go.textContent = `만드는 중… ${i}/${total}`; });
-      const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `복기차트_${todayStr()}.pdf` });
-      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      saveBlob(blob, `trade_charts_${todayStr()}.pdf`);
       w.remove(); toast(`PDF를 내려받았어요 (${(blob.size / 1048576).toFixed(1)}MB)`);
     } catch (err) { go.disabled = false; go.textContent = "다시 만들기"; toast("PDF를 만들지 못했어요. 인터넷 연결을 확인해 주세요"); }
   };
@@ -1110,8 +1149,7 @@ async function exportCsv() {
   const rows = enriched().slice().reverse().map(t => [t.date,t.name,GRADES[+t.grade]||"",t.type,t.mood,t.reason,t.buy,t.sell,t.qty,t.stop,t.stopKept,(t.mistakes||[]).join(", "),t.memo,t.lesson,
     t.c?.buyAmt,t.c?.sellAmt,t.c?.cost,t.c?.pnl,t.c ? (t.c.ret*100).toFixed(2)+"%" : "",t.c?.R != null ? t.c.R.toFixed(2) : "",(t.photos||[]).length].map(q).join(","));
   const blob = new Blob(["\uFEFF" + [head.join(","), ...rows].join("\n")], { type: "text/csv" });
-  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `매매기록_${todayStr()}.csv` });
-  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); toast("CSV를 내려받았어요");
+  saveBlob(blob, `trades_${todayStr()}.csv`); toast("CSV를 내려받았어요");
 }
 
 /* ---------- 매매 시트 (복기카드) ---------- */
@@ -1313,6 +1351,7 @@ function openTrade(id) {
   <aside class="sheet" role="dialog" aria-modal="true" aria-label="매매 복기">
     <div class="sheet-head"><h2 id="sh-title"></h2>
       ${base ? `<button class="btn danger" type="button" id="sh-del">삭제</button>` : ""}
+      <button class="btn" type="button" id="sh-pdf" title="이 매매를 PDF로 내려받아 Claude에게 물어보기">PDF</button>
       <button class="btn" type="button" data-close>닫기</button>
       <button class="btn primary" type="button" id="sh-save">저장</button></div>
     <div class="sheet-body">
@@ -1393,6 +1432,7 @@ function openTrade(id) {
   sync(); renderPhotos(); requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
   L.querySelectorAll("[data-close]").forEach(b => b.onclick = closeTrade);
   $("#sh-save").onclick = saveTrade;
+  $("#sh-pdf").onclick = () => exportTradePdf();
   if (base) $("#sh-del").onclick = deleteTrade;
   $("#pick").onclick = () => $("#file").click();
   $("#file").onchange = e => { addFiles([...e.target.files]); e.target.value = ""; };
