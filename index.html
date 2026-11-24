@@ -296,6 +296,21 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .sec-filter button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer;color:var(--muted)}
 .sec-filter button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);font-weight:600}
 .news-list .stk{font-size:11.5px;font-weight:700;color:var(--accent);margin-right:6px}
+.rv-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.rv-list details{border:1px solid var(--line);border-left-width:3px;border-radius:8px;padding:7px 10px;background:var(--surface)}
+.rv-list details.warn{border-left-color:#C2410C}
+.rv-list details.good{border-left-color:#2E9E5B}
+.rv-list details.info{border-left-color:var(--line-strong)}
+.rv-list summary{cursor:pointer;font-size:13.5px;font-weight:600;list-style:none;display:flex;gap:6px;align-items:baseline}
+.rv-list summary::-webkit-details-marker{display:none}
+.rv-list summary i{font-style:normal;font-size:11px;font-weight:700;border-radius:4px;padding:0 5px;color:#fff;flex:0 0 auto}
+.rv-list .warn summary i{background:#C2410C}.rv-list .good summary i{background:#2E9E5B}.rv-list .info summary i{background:var(--muted)}
+.rv-list summary small{font-weight:400;color:var(--muted)}
+.rv-list p{margin:6px 0 0;font-size:13px;line-height:1.6;color:var(--fg)}
+.rv-list cite{display:block;margin-top:4px;font-style:normal;font-size:11.5px;color:var(--faint)}
+.rv-verdict{font-weight:700}
+.rv-verdict.warn{color:#C2410C}.rv-verdict.good{color:#2E9E5B}
+.ai-body{max-height:420px;overflow:auto;font-size:13.5px;line-height:1.7;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:6px}
 .us-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .us-row + .us-row{margin-top:8px}
 .us-lab{font-size:11.5px;font-weight:700;color:var(--muted);letter-spacing:.03em;min-width:64px}
@@ -982,6 +997,47 @@ function refAddForm() {
     f.hidden = true; renderRefs(); syncPins();
   };
 }
+// 미모사 원칙 체크 (매매 한 건) + Claude 평가 붙여넣기
+function renderReview(d) {
+  const box = $("#sh-review"); if (!box || !window.TJCoach?.reviewTrade) return;
+  const t = { ...d, c: calc(d), fx: state.fx.get(d.date + "|" + d.name) || null, kind: tradeKind(d), cap: tradeCap(d) };
+  if (!d.missed && !t.c && !(d.name && d.date)) { box.innerHTML = `<div class="mkt-head"><b>미모사 원칙 체크</b></div><div class="mkt-empty">종목명·날짜·가격을 넣으면 미모사 자료의 원칙에 이 매매를 대 본 코멘트가 나와요.</div>`; return; }
+  const nv = newsCache.get(d.date + "|" + d.name);
+  const r = TJCoach.reviewTrade(t, { us: usLine(d.date, d.name), newsN: nv && nv.items ? nv.items.length : null });
+  const tag = { warn: "고칠 점", info: "참고", good: "잘한 점" };
+  box.innerHTML = `<div class="mkt-head"><b>미모사 원칙 체크</b><span class="rv-verdict ${r.tone}">${esc(r.verdict)}</span></div>
+    ${r.items.length ? `<ul class="rv-list">${r.items.map(i => `<li><details class="${i.tone}" ${i.tone === "warn" ? "open" : ""}><summary><i>${tag[i.tone]}</i><span>${esc(i.title)}${i.mine ? ` <small>· ${esc(i.mine)}</small>` : ""}</span></summary>
+      <p>${esc(i.principle)}</p><cite>출처: ${i.src.map(esc).join(" · ")}</cite></details></li>`).join("")}</ul>` : `<div class="mkt-empty">기록만으로는 짚을 점이 없어요.</div>`}
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0;line-height:1.5">미모사 자료(공지·Q&A·특강)의 원칙에 이 매매 기록을 대 본 자동 코멘트예요. 미모사 본인의 평가는 아니에요. 분봉 거래대금(1분 40억 기준)이나 일봉 자리는 기록에 없어서 차트로 직접 확인해 주세요.</p>`;
+}
+function tradeQuestion(d) {
+  const c = calc(d), fx = state.fx.get(d.date + "|" + d.name), k = tradeKind(d), cap = tradeCap(d);
+  const plain = h => String(h || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const lines = [
+    `트레이딩 프로젝트의 claude/매매복기-분석-지침.md 방식대로 이 매매를 평가해줘.`,
+    `미모사 자료(공지·특강·Q&A·매매일지) 전체를 근거로, '미모사였다면' 어디서 진입하고 어디서 매도했을지, 잘한 점, 고칠 점을 출처와 함께 적어줘.`,
+    `결과를 알고 하는 판단(진입 후 나온 기사, 이후 차트)은 빼고 당시 볼 수 있던 것만으로. 마지막에 5줄 이내 요약.`,
+    `(차트는 사이트에서 받은 이 매매의 PDF를 같이 올릴게)`,
+    ``,
+    `- ${d.missed ? "놓친 종목" : "매매"}: ${d.date} ${d.name}${k ? ` (${k}${cap != null ? `, 당시 시총 약 ${Math.round(cap).toLocaleString("ko-KR")}억` : ""})` : ""} · 유형 ${d.type || "-"} · 시장분위기 ${d.mood || "-"}`,
+    `- ${d.missed ? "가상 진입/매도" : "평균매수/매도"}: ${d.buy || "-"} / ${d.sell || "-"}${d.missed ? "" : ` · 수량 ${d.qty || "-"}`} · 계획손절 ${d.stop || "-"}${c ? ` · 손익 ${Math.round(c.pnl).toLocaleString("ko-KR")}원 (${(c.ret * 100).toFixed(2)}%)` : ""}`,
+    fx ? `- 체결: 진입 ${fx.entryTime || "-"} · 청산 ${fx.exitTime || "-"} · 물타기 ${fx.avgDown || 0}번 · 불타기 ${fx.pyramid || 0}번` : "",
+    `- ${d.missed ? "봤어야 할 자리" : "진입근거"}: ${plain(d.reasonHtml || d.reason) || "-"}`,
+    d.missed ? `- 안 한 이유: ${(d.missReasons || []).join(", ") || "-"}` : `- 실수유형: ${(d.mistakes || []).join(", ") || "-"} · 손절 지켰나 ${d.stopKept || "-"}`,
+    `- 복기 메모: ${plain(d.memoHtml || d.memo) || "-"}`
+  ];
+  return lines.filter(x => x !== "").join("\n");
+}
+function renderAiNote(d) {
+  const box = $("#sh-ai"); if (!box) return;
+  const note = (d.aiNote || "").trim();
+  box.innerHTML = `<div class="mkt-head"><b>Claude 평가 (미모사 기준)</b><span>${note ? "붙여넣은 답변" : "아직 없음"}</span></div>
+    ${note ? `<div class="ai-body">${mdLite(note)}</div>` : `<div class="mkt-empty">'질문 복사'를 눌러 트레이딩 프로젝트 새 채팅에 붙여넣고, 위 PDF 버튼으로 받은 파일도 같이 올려 주세요. 받은 답을 '답변 붙여넣기'로 넣으면 여기에 남아요.</div>`}
+    <div class="news-links"><button class="btn sm" type="button" id="ai-q">질문 복사</button><button class="btn sm" type="button" id="ai-paste">${note ? "답변 바꾸기" : "답변 붙여넣기"}</button>${note ? `<button class="btn sm" type="button" id="ai-del">지우기</button>` : ""}</div>`;
+  $("#ai-q").onclick = async () => { const q = tradeQuestion(d); try { await navigator.clipboard.writeText(q); toast("질문을 복사했어요. PDF도 같이 올려 주세요"); } catch { textModal("질문", "자동 복사가 안 돼서 아래 글을 직접 복사해 주세요 (Ctrl+A → Ctrl+C).", q); } };
+  $("#ai-paste").onclick = () => textModal("Claude 평가 붙여넣기", "claude.ai에서 받은 답을 그대로 붙여넣으세요. 넣은 뒤 복기 창의 <b>저장</b>을 눌러야 남아요.", d.aiNote || "", "넣기", v => { d.aiNote = v.trim(); renderAiNote(d); toast("넣었어요. 저장을 눌러 주세요"); return true; });
+  const del = $("#ai-del"); if (del) del.onclick = () => { d.aiNote = ""; renderAiNote(d); toast("지웠어요. 저장을 눌러야 반영돼요"); };
+}
 let newsSel = "";
 function peersOf(name) { return [...new Set(sectorsOf(name).flatMap(s => s.stocks.map(x => x.name)))].filter(n => n !== name); }
 async function renderNews(date, name, fx, force) {
@@ -1023,7 +1079,7 @@ async function renderNews(date, name, fx, force) {
     ${items.length ? `<ul class="news-list">${items.map(li).join("")}</ul>${items.length > N ? `<button class="btn sm" type="button" id="news-more" style="margin-top:6px">${items.length - N}건 더 보기</button>` : ""}` : `<div class="mkt-empty">${v.status === "empty" ? "네이버 증권 종목 뉴스 목록에 이 종목 기사가 없어요. 신규 상장주나 새 형식 코드(영문 섞인 코드)는 비어 있을 수 있어요. 아래 검색 링크로 보세요." : v.status === "partial" ? "네이버 종목 뉴스 목록이 이 날짜까지 거슬러 올라가지 않아요. 아래 검색 링크로 보세요." : "이 기간에 네이버 증권에 올라온 종목 뉴스가 없어요."}</div>`}
     ${items.length && v.status === "partial" ? `<div class="mkt-empty" style="margin-top:6px">기사가 많은 종목이라 네이버 목록에서 일부만 가져왔어요. 빠진 건 아래 검색 링크로 보세요.</div>` : ""}
     ${newsLinks(date, sel, code, v.from)}`;
-  bindBar();
+  bindBar(); if (!isPeer && sheet) renderReview(sheet.draft);
   box.querySelectorAll("[data-pin]").forEach(b => b.onclick = () => { const x = items[+b.dataset.pin]; togglePin({ ...x, title: isPeer && !x.title.includes(sel) ? `[${sel}] ${x.title}` : x.title, after: !!tag(x) }); });
   syncPins();
   const mb = $("#news-more"); if (mb) mb.onclick = () => { box.querySelectorAll("[data-more]").forEach(e => e.hidden = false); box.querySelectorAll(".news-day").forEach(e => e.hidden = false); mb.remove(); };
@@ -2057,6 +2113,8 @@ function openTrade(id, opts = {}) {
       <div class="mkt" id="sh-news"></div>
       <div class="mkt" id="sh-mkt"></div>
       <div class="mkt" id="sh-fills" hidden></div>
+      <div class="mkt" id="sh-review"></div>
+      <div class="mkt" id="sh-ai"></div>
      </div>
      <div class="sh-col sh-mine" aria-label="내 복기">
       <p class="sh-col-h">내 복기</p>
@@ -2140,7 +2198,7 @@ function openTrade(id, opts = {}) {
     const risk = (d.buy > 0 && d.stop > 0 && d.stop < d.buy && d.qty > 0) ? (d.buy - d.stop) * d.qty : null;
     $("#sh-mkt").innerHTML = marketCard(d.date);
     const fx = state.fx.get(d.date + "|" + d.name), fb = $("#sh-fills");
-    renderNews(d.date, d.name, fx); renderUs(d.date, d.name);
+    renderNews(d.date, d.name, fx); renderUs(d.date, d.name); renderReview(d);
     fb.hidden = !fx; if (fx) fb.innerHTML = fillsCard(fx, d.date);
     if (M) {
       const r = missRet(d), sl = d.buy > 0 && d.stop > 0 && d.stop < d.buy ? d.stop / d.buy - 1 : null;
@@ -2162,7 +2220,7 @@ function openTrade(id, opts = {}) {
   };
   $(".sheet-body").addEventListener("input", sync);
   $("#t-type").addEventListener("change", sync);
-  newsShown = ""; usShown = ""; d.newsRefs = d.newsRefs || []; sync(); renderPhotos(); renderRefs(); $("#refAdd").onclick = refAddForm; requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
+  newsShown = ""; usShown = ""; renderAiNote(d); d.newsRefs = d.newsRefs || []; sync(); renderPhotos(); renderRefs(); $("#refAdd").onclick = refAddForm; requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
   sheet.original = JSON.stringify(draft);  // 처음 화면을 채우며 생긴 형식 차이는 변경으로 치지 않음
   L.querySelectorAll("[data-close]").forEach(b => b.onclick = closeTrade);
   $("#sh-save").onclick = saveTrade;
@@ -2281,6 +2339,7 @@ async function saveTrade() {
     buy: d.buy ?? null, sell: d.sell ?? null, qty: d.qty ?? null, stop: d.stop ?? null, stopKept: d.stopKept || "", grade: d.grade ? +d.grade : null,
     mistakes: d.mistakes || [], memo: d.memo || "", lesson: d.lesson || "",
     ...(d.missed ? { missed: true, missReasons: d.missReasons || [] } : {}),
+    ...(d.aiNote ? { aiNote: d.aiNote } : {}),
     newsRefs: (d.newsRefs || []).map(r => ({ t: r.t || "", title: r.title || "", press: r.press || "", url: r.url || "", sum: r.sum || "", img: r.img || "", note: r.note || "", after: !!r.after })),
     photos: d.photos.map(p => ({ asset: p.asset, title: p.title || "", note: p.note || "", noteHtml: p.noteHtml || "", marks: p.marks || [] })),
     createdAt: d.createdAt || Date.now(), updatedAt: Date.now() };

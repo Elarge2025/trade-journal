@@ -14,6 +14,8 @@
     jong: "5강 중요 설명 · 종가베팅 기본 매매 틀",
     jong2: "종가베팅의 모호함으로 어려움을 겪는 분들께",
     last: "마지막 공지사항",
+    qa1: "1강 Q&A 정리",
+    qa2: "2강 Q&A 정리",
     qa3: "3강 Q&A 정리",
     qa4: "4강 Q&A 정리",
     qa5: "5강 Q&A 정리",
@@ -326,5 +328,83 @@
     return { n: x.all.n, profile: profile(x), items };
   }
 
-  window.TJCoach = { analyze };
+  // ---------- 매매 한 건 체크 ----------
+  // t: 매매 한 건 (c 계산, fx 체결, kind 종목 유형, mistakes, stop, stopKept, mood, type, reason, grade, missed, missReasons)
+  // ctx: { mk: 그날 시장, us: 전날 미국장, newsN: 관련 뉴스 수(모르면 null) }
+  function reviewTrade(t, ctx = {}) {
+    const items = [], add = (tone, title, mine, principle, src) => items.push({ tone, title, mine, principle, src });
+    const has = (...n) => hasMis(t, ...n);
+    const reasonEmpty = !String(t.reason || "").replace(/<[^>]*>/g, "").trim();
+
+    if (t.missed) {
+      const r = t.missReasons || [];
+      if (r.includes("규칙 밖이라 참음(잘함)")) add("good", "원칙대로 참은 매매예요", "내 기준에 안 맞아서 들어가지 않았어요.",
+        "최종적으로 내 매매 기준에 100% 부합하는 최상위 주도주 하나를 고르는 게 뇌동매매를 줄이는 길이에요. 놓친 수익보다 지킨 원칙이 계좌를 키워요.", [SRC.qa1]);
+      if (r.includes("못 봤음")) add("info", "못 본 종목이었어요", "장중에 이 종목을 발견하지 못했어요.",
+        "조건검색식 없이도 거래대금 상위와 실시간 종목 조회순위 1~10위를 키보드 화살표로 돌려 보면서 돈이 몰리는 종목을 확인해요.", [SRC.qa6]);
+      if (r.some(x => /망설임|확신/.test(x))) add("warn", "봤는데 손이 안 나갔어요", "기준에 맞는 자리를 보고도 망설였어요.",
+        "주도주로 확실히 자리 잡기 전에는 마음 편한 비중으로 먼저 들어가고, 확실해지면 비중을 채워요. 처음부터 크게 넣지 않으니 손절이 나도 다음 종목에서 다시 들어갈 수 있어요.", [SRC.qa3, SRC.size]);
+      if (r.includes("손절 직후 위축")) add("warn", "손절 직후라 위축됐어요", "직전 손절 때문에 다음 자리를 못 탔어요.",
+        "손절한 종목이 다시 기준에 맞는 자리를 주면 감정 빼고 다시 접근해요. 손절은 틀렸을 때 계좌를 지키는 비용일 뿐이에요.", [SRC.re]);
+      if (r.includes("비중 부담")) add("info", "비중이 부담됐어요", "금액이 커서 못 들어갔어요.",
+        "마음 편한 비중은 손절할 때 마음 편하게 대응할 수 있는 금액이에요. 확신이 덜하면 그 금액으로 일단 참여해요.", [SRC.size]);
+      if (reasonEmpty) add("info", "'봤어야 할 자리'를 적어 주세요", "왜 들어갔어야 했는지가 비어 있어요.",
+        "거래대금이 몰리는 종목·테마 → 주도주 확인 → 일봉·1분봉 흐름과 뉴스·재료 확인 순서로 당시 보였던 근거를 적어 두면 다음에 같은 자리를 알아봐요.", [SRC.sp]);
+      return finish(items, true);
+    }
+
+    const c = t.c, loss = c && !c.win, ret = c ? c.ret : null;
+    if (reasonEmpty) add("warn", "진입근거가 비어 있어요", "왜 샀는지 적혀 있지 않아요.",
+      "종목 선정 루틴: 어떤 종목이나 테마에 거래대금이 몰리는지 확인 → 테마가 오르면 등락률 순서로 관심종목에 넣고 주도주 확인 → 일봉·1분봉 흐름과 뉴스·재료 확인. 이 순서로 근거를 적어 보세요.", [SRC.sp]);
+    if (!(+t.stop > 0)) add("warn", "계획손절가가 없어요", "매수 전에 정한 손절 기준이 없어요.",
+      "손절가를 이탈하면 어디까지 빠질지 아무도 몰라요. 비중이 커서 한 번에 던지기 힘들거나 확신이 있어도, 손절 라인을 이탈하면 최소 절반은 바로 잘라요.", [SRC.re, SRC.qa6]);
+    if (loss && (t.stopKept === "X" || (+t.stop > 0 && +t.sell > 0 && +t.sell < +t.stop * 0.995)))
+      add("warn", "손절가보다 깊게 잘렸어요", `계획손절가 ${(+t.stop || 0).toLocaleString("ko-KR")} · 실제 매도 ${(+t.sell || 0).toLocaleString("ko-KR")}.`,
+        "다시 오를 거라는 확신이 없으면 일단 손절이 맞아요. 칼손절이 계좌를 지키는 정석이에요.", [SRC.re, SRC.qa6]);
+    else if (loss && (t.stopKept === "O" || (+t.stop > 0 && +t.sell >= +t.stop * 0.995)))
+      add("good", "손절을 지켰어요", "계획한 손절 자리에서 잘랐어요.", "손실은 기계적으로 짧게 자르는 게 손익비의 시작이에요.", [SRC.qa5]);
+    if (ret != null && ret <= -0.05) add("warn", `한 번에 ${(ret * 100).toFixed(1)}% 손실이에요`, "손실 폭이 커요.",
+      "비중을 올리더라도 -4~5% 손실을 감당할 수 있는 정도까지만이에요. 그보다 깊어지면 손절 기준이나 비중을 다시 봐야 해요.", [SRC.jong]);
+    if (has("물타기") || (t.fx && t.fx.avgDown)) add("warn", "물타기가 있었어요", t.fx && t.fx.avgDown ? `체결 기록에서 평단 아래 추가매수 ${t.fx.avgDown}번이 잡혔어요.` : "실수유형에 물타기를 체크했어요.",
+      "평단을 낮추려는 물타기는 손익비를 망가뜨리는 습관이에요. 추세가 꺾이면 바로 손절하고, 손절 기회를 놓쳤더라도 평단 낮추기 없이 반등 때 정리해요.", [SRC.qa5]);
+    if (c && c.win && t.fx && t.fx.pyramid) add("good", "수익 구간에서 비중을 실었어요", `평단 위 추가매수 ${t.fx.pyramid}번.`,
+      "수익은 연속성 있게 올라가는 강한 종목에서 키워요. 분할 진입 후 시세가 나올 때 비중을 싣는 방식이에요.", [SRC.qa5]);
+    if (has("추격", "급등")) add("warn", "급등 중에 따라 샀어요", "추격매수 계열 실수를 체크했어요.",
+      "급등 중에, 사람들이 매도하는 자리에서 매수하면 안 돼요. 25% 이상 급등한 종목은 남은 먹을 폭보다 하락 위험이 커요.", [SRC.desk, SRC.qa3]);
+    if (has("과도한 비중", "비중")) add("warn", "비중이 과했어요", "과도한 비중을 체크했어요.",
+      "마음 편한 비중은 잃어도 괜찮고 이성이 마비되지 않는 금액이에요. 손절할 때 편하게 대응할 수 있는 금액만 넣어요.", [SRC.size]);
+    if (t.kind === "소형주") add("warn", "소형주였어요", t.cap != null ? `당시 시총 약 ${Math.round(t.cap).toLocaleString("ko-KR")}억.` : "종목 유형이 소형주예요.",
+      "시가총액이 작고 대금이 적은 종목은 기술적 분석의 신뢰도가 없어요. 소형주에서 10%를 쫓기보다 주도주에서 확실한 3%를 먹는 매매를 해요.", [SRC.qa2, SRC.qa3]);
+    if (t.kind === "세력주") add("info", "세력주 매매였어요", "",
+      "세력주가 잘 가는 시장에서는 세력주 위주로 해요. 그날 시장이 세력주 장이었는지 같이 봐 주세요.", [SRC.imp]);
+    if (t.mood && /나쁨|어려|하락/.test(t.mood)) {
+      if (loss) add("warn", "시장이 나쁜 날의 손실이에요", "시장분위기를 '나쁨'으로 적었어요.",
+        "매매하기 좋은 시장이 아니면 비중을 최소로 줄이고 시장을 구경한다는 생각으로 해요. 매매할 종목이 없으면 쉬는 것도 매매예요.", [SRC.mkt, SRC.qa6]);
+      else add("info", "어려운 시장에서 이겼어요", "시장분위기 '나쁨'에서 수익.", "어려운 시장에서는 목표 수익률을 짧게 잡아 승률을 높이는 방식이 맞아요. 비중은 계속 낮게 유지해요.", [SRC.sp, SRC.mkt]);
+    }
+    const et = t.fx && t.fx.entryTime;
+    if (et && !t.fx.overnight) {
+      if (et < "09:00") add("warn", "NXT 프리장 진입이에요", `진입 ${et.slice(0, 5)}.`, "NXT 프리장은 변동성이 오락가락하고 거래대금이 작아요.", [SRC.desk]);
+      else if (et < "09:20") add(loss ? "warn" : "info", "장 초반 진입이에요", `진입 ${et.slice(0, 5)}.`,
+        "09:00~09:20 사이 수급이 여러 종목으로 흩어지면 성급하게 들어가지 않고, 거래대금이 확실한 주도주로 쏠리는 09:20 이후 흐름을 확인해요. 전날 강한 종목이 시세를 이어가는 경우는 예외예요.", [SRC.qa2, SRC.desk]);
+    }
+    if (t.type && /신규/.test(t.type)) add("info", "신규주 매매예요", "", "신규주는 대응이 되는 분들만 해요. -5% 이상 하락이 쉽게 나오니 그걸 감안해서 금액을 정해요.", [SRC.qa4, SRC.imp]);
+    if (t.type && /종가/.test(t.type)) add("info", "종가베팅 체크", "", "다음 날 시장에서 가장 관심을 받을 종목인지: 큰 거래대금, 좋은 뉴스, 신고가 여부. 분봉 추세가 아래로 꺾인 종목은 하지 않아요.", [SRC.jong]);
+    if (ctx.newsN === 0) add("info", "그 기간 종목 뉴스가 없었어요", "전 거래일~매매일에 잡힌 기사가 없어요.", "뉴스·재료 확인은 종목 선정 루틴의 한 단계예요. 재료 없이 움직인 종목이면 근거가 약했을 수 있어요.", [SRC.sp]);
+    if (ctx.us && ctx.us.idx && ctx.us.idx[0].pct != null && ctx.us.idx[0].pct <= -1.5 && loss)
+      add("info", "전날 미국장이 약했어요", `나스닥 ${ctx.us.idx[0].pct.toFixed(2)}%.`, "시장이 안 좋은 날은 매매 성공 확률 자체가 떨어져요. 그런 날은 비중을 줄여요.", [SRC.mkt]);
+    if (+t.grade && +t.grade <= 2) add("info", "스스로 낮게 평가한 매매예요", "", "반복되는 나쁜 매매는 횟수와 손실금을 적어서 모니터에 붙여 두고 의식적으로 줄여요.", [SRC.qa4, SRC.sp]);
+    if (c && c.win && !items.some(i => i.tone === "warn")) add("good", "원칙 안에서 수익을 냈어요", "", "기준에 부합하는 좋은 종목에서만 매매를 완벽하게 하려고 노력하면 수익금은 따라와요.", [SRC.qa4]);
+    return finish(items, false);
+  }
+  function finish(items, missed) {
+    const order = { warn: 0, info: 1, good: 2 };
+    items.sort((a, b) => order[a.tone] - order[b.tone]);
+    const w = items.filter(i => i.tone === "warn").length, g = items.filter(i => i.tone === "good").length;
+    const verdict = missed ? (w ? `고칠 점 ${w}개` : "원칙 점검 완료")
+      : w === 0 ? (g ? "원칙대로 한 매매예요" : "크게 어긋난 점은 안 보여요") : w >= 3 ? `원칙에서 많이 벗어났어요 · 고칠 점 ${w}개` : `고칠 점 ${w}개`;
+    return { verdict, tone: w ? "warn" : "good", items };
+  }
+
+  window.TJCoach = { analyze, reviewTrade };
 })();
