@@ -255,6 +255,23 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .sec-search .inp{flex:1 1 240px;max-width:360px}
 .sec-hits{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
 .sec-hit{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.strat-form{max-height:calc(100dvh - 32px);overflow-y:auto}
+.strat-sum{margin:4px 0 0;color:var(--muted)}
+.strat-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:14px}
+.strat-kpis>div{background:var(--surface-2);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.strat-kpis small{color:var(--muted);font-size:11.5px}.strat-kpis b{font-size:17px}.strat-kpis em{font-style:normal;font-size:11px;color:var(--faint)}
+.strat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-top:14px}
+.strat-f h4{margin:0 0 6px;font-size:13px;color:var(--accent)}.strat-f.avoid h4{color:var(--warn)}
+.strat-f .md p{margin:0 0 4px}.strat-f .md ul{margin:0;padding-left:18px}
+.ck-list{margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:4px}.ck-list li::before{content:"☐ ";color:var(--muted)}
+.strat-photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;border:1px dashed transparent;border-radius:10px}
+.strat-photos.over{border-color:var(--accent)}
+.strat-photos figure{margin:0;display:flex;flex-direction:column;gap:6px}.strat-photos img{width:100%;border-radius:8px;border:1px solid var(--line);cursor:zoom-in;background:var(--surface-2);min-height:80px;object-fit:contain}
+.strat-photos figcaption{display:flex;gap:6px}
+.sec-tabs button.off{opacity:.55}
+.chip.st-0{background:var(--accent-soft);color:var(--accent);font-weight:600}.chip.st-1{background:var(--warn-soft);color:var(--warn);font-weight:600}
+.ck-box{display:flex;flex-direction:column;gap:6px;margin-top:10px}.ck-box label{display:flex;gap:8px;align-items:flex-start;font-size:13.5px;cursor:pointer}.ck-box input{margin-top:3px}
+.warn-t{color:var(--warn)}
 .sec-tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;scrollbar-width:thin}
 .sec-tabs button{flex:0 0 auto;border:1px solid var(--line-strong);background:var(--surface);border-radius:999px;padding:6px 13px;font-weight:600;font-size:13px;cursor:pointer;color:var(--muted);white-space:nowrap}
 .sec-tabs button small{font-weight:500;margin-left:4px;color:var(--faint)}
@@ -450,6 +467,7 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
   <div class="brand"><b>매매 복기노트</b><span id="countLabel">기록을 불러오는 중</span></div>
   <nav class="tabs" aria-label="화면">
     <a href="#log" data-view="log">매매기록</a>
+    <a href="#strategy" data-view="strategy">매매전략</a>
     <a href="#stats" data-view="stats">통계</a>
     <a href="#notes" data-view="notes">오답노트</a>
     <a href="#sectors" data-view="sectors">섹터</a>
@@ -486,6 +504,9 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
     </div>
     <div id="listWrap"></div>
   </section>
+
+  <!-- 매매전략 -->
+  <section id="view-strategy" data-viewpane="strategy" hidden></section>
 
   <!-- 통계 -->
   <section id="view-stats" data-viewpane="stats" hidden></section>
@@ -593,6 +614,7 @@ function applyCfg(c) {
     usMap: c.usMap && typeof c.usMap === "object" ? c.usMap : {},
     stockMemo: c.stockMemo && typeof c.stockMemo === "object" ? c.stockMemo : {},
     stockKind: c.stockKind && typeof c.stockKind === "object" ? c.stockKind : {},
+    strategies: Array.isArray(c.strategies) ? c.strategies : [],
     capRule: { small: +(c.capRule?.small) > 0 ? +c.capRule.small : 3000, big: +(c.capRule?.big) > 0 ? +c.capRule.big : 50000 } };
 }
 async function refresh() { try { await api.loadAll(); state.loaded = true; setStatus(""); } catch (e) { setStatus("기록을 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.", true); } render(); if (state.loaded) setTimeout(fillMissing, 400); }
@@ -771,7 +793,7 @@ function setStatus(msg, warn) {
 }
 
 /* ---------- 라우팅 ---------- */
-const VIEWS = ["log","stats","notes","sectors","setup"];
+const VIEWS = ["log","strategy","stats","notes","sectors","setup"];
 function route() {
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
   document.querySelectorAll("[data-viewpane]").forEach(p => p.hidden = p.dataset.viewpane !== v);
@@ -1956,6 +1978,183 @@ function sectorForm(sc) {
 }
 document.addEventListener("click", e => { const g = e.target.closest("[data-gosec]"); if (!g) return; setSel(g.dataset.gosec); const c = document.querySelector(".sheet-head [data-close]"); if (c) c.click(); });
 
+/* ---------- 매매전략 (settings.strategies에 저장) ---------- */
+const STRAT_STATUS = ["사용 중", "연습 중", "보류"];
+const STRAT_FIELDS = [
+  ["market", "시장 조건", "어떤 시장에서 쓰나. 예: 주도주가 있는 날, 나스닥 -1.5% 이하인 날은 안 함"],
+  ["pick", "종목 선정", "어떤 종목만 하나. 예: 거래대금 상위, 재료 있는 섹터 대장, 소형주 제외"],
+  ["entry", "진입 (타점)", "어느 자리에서 사나. 예: 일봉 단기 고점 돌파 후 첫 눌림, 분봉 기준봉 절반"],
+  ["exit", "익절", "어디서 파나. 예: 절반은 +3%, 나머지는 분봉 추세 이탈"],
+  ["stop", "손절", "어디서 틀렸다고 보나. 예: 진입 분봉 저가 이탈, -2%"],
+  ["size", "비중", "얼마나 사나. 예: 마음 편한 비중 기준, 1/3씩 분할, 하루 최대 손실"],
+  ["avoid", "하지 말 것", "이 전략에서 자주 하는 실수. 예: 장 초반 추격, 물타기"]
+];
+const stratUi = { sel: "" };
+const strategies = () => [...(state.cfg.strategies || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+function tradeStrategy(t) {
+  const list = strategies();
+  if (t.strategy === "none") return null;
+  if (t.strategy) { const s = list.find(x => x.id === t.strategy); if (s) return s; }
+  return t.type ? list.find(s => s.status !== "보류" && (s.types || []).includes(t.type)) || list.find(s => (s.types || []).includes(t.type)) || null : null;
+}
+async function saveStrategies(list, msg) {
+  await api.saveSettings({ ...state.cfg, strategies: list, updatedAt: Date.now() }); state.cfg.strategies = list;
+  if (msg) toast(msg);
+}
+function checkStat(t, s) {
+  const items = s.checklist || []; if (!items.length || !t.checks) return null;
+  const done = items.filter(x => t.checks.includes(x)).length; return { done, all: items.length };
+}
+function renderStrategy() {
+  const box = $("#view-strategy"); if (!box) return;
+  const list = strategies();
+  if (!list.find(s => s.id === stratUi.sel)) stratUi.sel = list[0]?.id || "";
+  const cur = list.find(s => s.id === stratUi.sel);
+  let detail = "";
+  if (cur) {
+    const all = enriched(true).filter(t => tradeStrategy(t)?.id === cur.id);
+    const real = all.filter(t => !t.missed), missed = all.filter(t => t.missed);
+    const S = summarize(real);
+    const rets = real.filter(t => t.c).map(t => t.c.ret), avgRet = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : null;
+    const withCk = real.filter(t => t.c && checkStat(t, cur)), full = withCk.filter(t => { const c = checkStat(t, cur); return c.done === c.all; }), part = withCk.filter(t => !full.includes(t));
+    const sub = l => { const s = summarize(l); return l.length ? `${l.length}건 · 승률 ${s.winRate != null ? Math.round(s.winRate * 100) + "%" : "–"} · <span class="${cls(s.total)}">${signed(s.total)}원</span>` : "없음"; };
+    const filled = STRAT_FIELDS.filter(([k]) => (cur[k] || "").trim());
+    detail = `<div class="card strat-card">
+      <div class="sec-head"><div style="flex:1;min-width:0"><h3>${esc(cur.name)} <span class="chip st-${STRAT_STATUS.indexOf(cur.status || "사용 중")}">${esc(cur.status || "사용 중")}</span></h3>
+        ${cur.summary ? `<p class="strat-sum">${esc(cur.summary)}</p>` : ""}
+        <div style="margin-top:6px">${(cur.types || []).length ? `<span class="muted" style="font-size:12px">연결된 매매유형 </span>${cur.types.map(x => `<span class="chip type">${esc(x)}</span>`).join("")}` : `<span class="muted" style="font-size:12px">연결된 매매유형 없음 · '수정'에서 고르면 그 유형 매매가 이 전략으로 묶여요</span>`}</div></div>
+        <button class="btn sm" type="button" id="st-edit">수정</button></div>
+      <div class="strat-kpis">
+        <div><small>매매</small><b class="num">${real.length}건</b>${missed.length ? `<em>놓친 종목 ${missed.length}</em>` : ""}</div>
+        <div><small>승률</small><b class="num">${S.winRate != null ? Math.round(S.winRate * 100) + "%" : "–"}</b></div>
+        <div><small>누적 손익</small><b class="num ${cls(S.total)}">${S.n ? signed(S.total) : "–"}</b></div>
+        <div><small>평균 수익률</small><b class="num ${cls(avgRet)}">${avgRet != null ? spct(avgRet) : "–"}</b></div>
+        <div><small>손익비</small><b class="num">${S.payoff != null ? S.payoff.toFixed(2) : "–"}</b></div>
+        <div><small>손절 준수</small><b class="num">${S.stopRate != null ? Math.round(S.stopRate * 100) + "%" : "–"}</b></div>
+      </div>
+      ${(cur.checklist || []).length ? `<p class="muted" style="font-size:12.5px;margin:8px 0 0">체크리스트 다 지킨 매매: <b>${sub(full)}</b> &nbsp;/&nbsp; 빠뜨린 매매: <b>${sub(part)}</b>${withCk.length < real.length ? ` <span class="faint">(체크 안 한 매매 ${real.length - withCk.length}건 제외)</span>` : ""}</p>` : ""}
+    </div>
+    <div class="strat-grid">
+      ${filled.length ? filled.map(([k, l]) => `<div class="card strat-f ${k === "avoid" ? "avoid" : ""}"><h4>${l}</h4><div class="md">${mdLite(cur[k])}</div></div>`).join("") : `<div class="card"><p class="muted" style="margin:0">아직 내용이 없어요. '수정'을 눌러 시장 조건·종목 선정·진입·익절·손절·비중을 적어 보세요.</p></div>`}
+      ${(cur.checklist || []).length ? `<div class="card strat-f"><h4>매수 전 체크리스트</h4><ul class="ck-list">${cur.checklist.map(x => `<li>${esc(x)}</li>`).join("")}</ul><p class="muted" style="font-size:12px;margin:6px 0 0">매매 기록 창에서 이 유형을 고르면 체크할 수 있어요.</p></div>` : ""}
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="section-head" style="margin:0 0 10px"><h4 class="grow" style="margin:0">예시 차트</h4><span class="muted" style="font-size:12px">이 화면에서 Ctrl+V · 끌어다 놓기</span>
+        <button class="btn sm" type="button" id="st-pick">사진 고르기</button><input type="file" id="st-file" accept="image/*" multiple hidden></div>
+      <div class="strat-photos" id="st-drop">${(cur.photos || []).length ? cur.photos.map((p, i) => `<figure><img data-path="${esc(p.asset)}" alt="${esc(p.note || "예시 차트")}" data-zoom="${i}">
+          <figcaption><input class="inp" data-pnote="${i}" value="${esc(p.note || "")}" placeholder="이 차트에서 볼 점"><button type="button" class="btn sm danger" data-prm="${i}">빼기</button></figcaption></figure>`).join("")
+        : `<p class="muted" style="margin:0">이 전략의 좋은 자리·나쁜 자리 차트를 붙여 두면 매매 전에 다시 보기 좋아요.</p>`}<div class="uploading" id="st-up" hidden></div></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h4 style="margin:0 0 10px">이 전략 매매 ${all.length ? `<span class="muted" style="font-weight:500">최근 ${Math.min(all.length, 50)}건</span>` : ""}</h4>
+      ${all.length ? `<div class="tscroll"><table class="t"><thead><tr><th>날짜</th><th style="text-align:left">종목</th><th style="text-align:left">유형</th><th>손익</th><th>수익률</th><th>체크</th><th style="text-align:left">평가</th></tr></thead><tbody>
+        ${all.slice(0, 50).map(t => { const ck = checkStat(t, cur); return `<tr data-open="${esc(t.id)}" style="cursor:pointer${t.missed ? ";opacity:.75" : ""}"><td class="num">${esc(t.date || "")}</td><td style="text-align:left"><b>${esc(t.name)}</b>${t.missed ? ` <span class="chip miss">놓친 종목</span>` : ""}</td><td style="text-align:left">${esc(t.type || "")}</td>
+          <td class="num ${t.missed ? "" : cls(t.c?.pnl)}">${t.missed ? `<span class="hypo">가상 ${missRet(t) != null ? spct(missRet(t), 1) : "–"}</span>` : t.c ? signed(t.c.pnl) : "–"}</td><td class="num ${cls(t.c?.ret)}">${t.c ? spct(t.c.ret) : "–"}</td>
+          <td class="num ${ck ? (ck.done === ck.all ? "up" : "warn-t") : "muted"}">${ck ? ck.done + "/" + ck.all : "–"}</td><td style="text-align:left">${gradeChip(t.grade)}</td></tr>`; }).join("")}</tbody></table></div>`
+        : `<p class="muted" style="margin:0">${(cur.types || []).length ? `'${esc(cur.types.join(", "))}' 유형으로 기록한 매매가 아직 없어요.` : "연결된 매매유형이 없어서 묶인 매매가 없어요. 매매 기록 창의 '전략'에서 직접 골라도 돼요."}</p>`}
+    </div>`;
+  }
+  box.innerHTML = `
+    <div class="section-head"><h2 class="grow">매매전략</h2><button class="btn" type="button" id="st-new">＋ 전략 만들기</button></div>
+    ${list.length ? `<div class="sec-tabs" role="tablist">${list.map(s => `<button type="button" role="tab" data-st="${esc(s.id)}" aria-pressed="${s.id === stratUi.sel}" class="${s.status === "보류" ? "off" : ""}">${esc(s.name)}<small>${esc(s.status || "사용 중")}</small></button>`).join("")}</div>` : ""}
+    ${cur ? detail : `<div class="card"><p style="margin:0 0 8px"><b>내 매매법을 전략 단위로 정리하는 곳이에요.</b></p>
+      <p class="muted" style="margin:0">전략마다 시장 조건 · 종목 선정 · 진입 · 익절 · 손절 · 비중 · 하지 말 것 · 매수 전 체크리스트를 적어 두고, 매매유형(돌파, 눌림목, 종가베팅 …)을 연결하면 그 유형 매매의 승률·손익이 전략별로 모여요. 매매 기록 창에서는 그 전략의 체크리스트를 체크할 수 있고, 다 지킨 매매와 빠뜨린 매매의 성과를 비교해 줘요.</p></div>`}`;
+  $("#st-new").onclick = () => strategyForm(null);
+  box.querySelectorAll("[data-st]").forEach(b => b.onclick = () => { stratUi.sel = b.dataset.st; renderStrategy(); });
+  if (!cur) return;
+  $("#st-edit").onclick = () => strategyForm(cur);
+  fillImages(box);
+  const upd = async (patch, msg) => { const nl = strategies().map(s => s.id === cur.id ? { ...s, ...patch, updatedAt: Date.now() } : s); try { await saveStrategies(nl, msg); renderStrategy(); } catch (err) { toast(errMsg(err)); } };
+  box.querySelectorAll("[data-prm]").forEach(b => b.onclick = async () => { const i = +b.dataset.prm, p = cur.photos[i]; await upd({ photos: cur.photos.filter((_, j) => j !== i) }, "뺐어요"); try { await api.removeImages([p.asset]); } catch {} });
+  box.querySelectorAll("[data-pnote]").forEach(inp => inp.onchange = () => { const ph = cur.photos.map((p, j) => j === +inp.dataset.pnote ? { ...p, note: inp.value.trim() } : p); upd({ photos: ph }); });
+  box.querySelectorAll("[data-zoom]").forEach(img => img.onclick = () => lightbox(cur.photos.map(p => ({ asset: p.asset, title: cur.name + " 예시", note: p.note || "", marks: [] })), +img.dataset.zoom));
+  $("#st-pick").onclick = () => $("#st-file").click();
+  $("#st-file").onchange = e => { stratFiles([...e.target.files]); e.target.value = ""; };
+  const dr = $("#st-drop");
+  dr.ondragover = e => { e.preventDefault(); dr.classList.add("over"); }; dr.ondragleave = () => dr.classList.remove("over");
+  dr.ondrop = e => { e.preventDefault(); dr.classList.remove("over"); stratFiles([...e.dataTransfer.files].filter(f => f.type.startsWith("image/"))); };
+}
+async function stratFiles(files) {
+  const id = stratUi.sel; if (!files.length || !id) return;
+  const st = $("#st-up"); if (st) { st.hidden = false; st.textContent = `사진 올리는 중… (${files.length})`; }
+  const added = [];
+  for (const f of files) {
+    try { const blob = await shrink(f); let type = blob.type || f.type; if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(type)) type = "image/png"; added.push({ asset: await api.upload(blob, type), note: "" }); }
+    catch { toast("사진을 올리지 못했어요. 다시 시도해 주세요"); }
+  }
+  if (!added.length) { if (st) st.hidden = true; return; }
+  const nl = strategies().map(s => s.id === id ? { ...s, photos: [...(s.photos || []), ...added], updatedAt: Date.now() } : s);
+  try { await saveStrategies(nl, `사진 ${added.length}장을 붙였어요`); } catch (err) { toast(errMsg(err)); }
+  if (location.hash === "#strategy") renderStrategy();
+}
+document.addEventListener("paste", e => {
+  if (sheet || !session || location.hash !== "#strategy" || !stratUi.sel || document.querySelector(".modal-wrap")) return;
+  const files = [...(e.clipboardData?.items || [])].filter(i => i.kind === "file" && i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean);
+  if (files.length) { e.preventDefault(); stratFiles(files); }
+});
+function strategyForm(s) {
+  const isNew = !s; s = s || { name: "", status: "사용 중", types: [], summary: "", checklist: [] };
+  const types = [...new Set([...state.cfg.types, ...(s.types || [])])];
+  const taken = t => strategies().find(x => x.id !== s.id && (x.types || []).includes(t));
+  const wrap = document.createElement("div"); wrap.className = "modal-wrap";
+  wrap.innerHTML = `<form class="modal strat-form" style="max-width:720px;display:flex;flex-direction:column;gap:12px">
+    <h2>${isNew ? "전략 만들기" : "전략 수정"}</h2>
+    <div class="fgrid"><label class="f s3"><span>전략 이름</span><input class="inp" id="sf-name" value="${esc(s.name)}" placeholder="예: 주도주 첫 눌림, 일봉 고점 돌파, 종가베팅" required></label>
+      <div class="f"><span style="font-size:12px;color:var(--muted);font-weight:600">상태</span><div class="seg" id="sf-status">${STRAT_STATUS.map(x => `<button type="button" data-v="${x}" aria-pressed="${(s.status || "사용 중") === x}">${x}</button>`).join("")}</div></div></div>
+    <label class="f"><span>한 줄 요약</span><input class="inp" id="sf-summary" value="${esc(s.summary || "")}" placeholder="예: 재료 있는 주도주가 단기 고점을 돌파한 뒤 첫 눌림에서 분할 매수"></label>
+    <div class="f"><span style="font-size:12px;color:var(--muted);font-weight:600">연결할 매매유형 (이 유형 매매가 이 전략으로 묶여요)</span>
+      <div class="toggles" id="sf-types">${types.map(t => { const o = taken(t); return `<button type="button" data-t="${esc(t)}" aria-pressed="${(s.types || []).includes(t)}" ${o ? `title="'${esc(o.name)}' 전략에도 연결돼 있어요"` : ""}>${esc(t)}${o ? " ·" : ""}</button>`; }).join("")}</div>
+      <em class="muted" style="font-size:11.5px;font-style:normal">유형이 없으면 설정 탭 '매매유형'에 먼저 추가하세요. 한 유형을 여러 전략에 연결하면 '사용 중'인 첫 전략으로 묶여요.</em></div>
+    ${STRAT_FIELDS.map(([k, l, ph]) => `<label class="f"><span>${l}</span><textarea class="inp" id="sf-${k}" rows="2" placeholder="${esc(ph)} · 줄머리에 - 를 쓰면 목록">${esc(s[k] || "")}</textarea></label>`).join("")}
+    <label class="f"><span>매수 전 체크리스트 (한 줄에 하나)</span><textarea class="inp" id="sf-check" rows="5" placeholder="주도주이거나 재료가 있다&#10;거래대금이 충분하다&#10;손절가를 먼저 정했다&#10;마음 편한 비중이다">${esc((s.checklist || []).join("\n"))}</textarea></label>
+    <div class="acts" style="display:flex;gap:8px;justify-content:flex-end">${isNew ? "" : `<button class="btn danger" type="button" data-a="del" style="margin-right:auto">삭제</button>`}
+      <button class="btn" type="button" data-a="no">취소</button><button class="btn primary" type="submit">저장</button></div></form>`;
+  document.body.appendChild(wrap); autosizeAll(wrap); if (isNew) $("#sf-name", wrap).focus();
+  let status = s.status || "사용 중"; const sel = new Set(s.types || []);
+  $("#sf-status", wrap).onclick = e => { const b = e.target.closest("[data-v]"); if (!b) return; status = b.dataset.v; wrap.querySelectorAll("#sf-status button").forEach(x => x.setAttribute("aria-pressed", x.dataset.v === status)); };
+  $("#sf-types", wrap).onclick = e => { const b = e.target.closest("[data-t]"); if (!b) return; const t = b.dataset.t; sel.has(t) ? sel.delete(t) : sel.add(t); b.setAttribute("aria-pressed", sel.has(t)); };
+  wrap.addEventListener("input", e => autosize(e.target));
+  wrap.addEventListener("click", async e => {
+    if (e.target === wrap) wrap.remove();
+    const a = e.target.closest("[data-a]"); if (!a) return;
+    if (a.dataset.a === "no") wrap.remove();
+    if (a.dataset.a === "del" && await confirmBox("전략 삭제", `'${s.name}' 전략을 지울까요? 매매 기록은 그대로 남아요.`)) {
+      try { await saveStrategies(strategies().filter(x => x.id !== s.id), "삭제했어요"); wrap.remove(); renderStrategy(); try { await api.removeImages((s.photos || []).map(p => p.asset)); } catch {} } catch (err) { toast(errMsg(err)); }
+    }
+  });
+  wrap.querySelector("form").onsubmit = async e => {
+    e.preventDefault();
+    const name = $("#sf-name", wrap).value.trim(); if (!name) return;
+    if (strategies().some(x => x.name === name && x.id !== s.id)) { toast("같은 이름의 전략이 이미 있어요"); return; }
+    const id = isNew ? crypto.randomUUID() : s.id;
+    const doc = { ...s, id, name, status, summary: $("#sf-summary", wrap).value.trim(), types: types.filter(t => sel.has(t)),
+      checklist: $("#sf-check", wrap).value.split("\n").map(x => x.trim()).filter(Boolean),
+      photos: s.photos || [], order: s.order ?? Date.now(), createdAt: s.createdAt || Date.now(), updatedAt: Date.now() };
+    STRAT_FIELDS.forEach(([k]) => doc[k] = $("#sf-" + k, wrap).value.trim());
+    const nl = isNew ? [...strategies(), doc] : strategies().map(x => x.id === id ? doc : x);
+    try { await saveStrategies(nl, "저장했어요"); stratUi.sel = id; wrap.remove(); renderStrategy(); } catch (err) { toast(errMsg(err)); }
+  };
+}
+// 매매 기록 창: 전략 고르기 + 체크리스트
+function renderTradeStrat(d) {
+  const box = $("#t-strat"); if (!box) return;
+  const list = strategies(), s = tradeStrategy(d);
+  const key = [d.type, d.strategy, s?.id, s?.updatedAt].join("|"); if (box.dataset.k === key) return; box.dataset.k = key;
+  if (!list.length) { box.innerHTML = `<span class="muted" style="font-size:12.5px">매매전략 탭에서 전략을 만들면 여기서 체크리스트를 쓸 수 있어요.</span>`; return; }
+  const auto = d.type ? list.find(x => x.status !== "보류" && (x.types || []).includes(d.type)) || list.find(x => (x.types || []).includes(d.type)) : null;
+  d.checks = d.checks || [];
+  box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:12px;color:var(--muted);font-weight:600">전략</span>
+      <select class="inp" id="t-strat-sel" style="width:auto;min-width:180px"><option value="">${auto ? `자동: ${esc(auto.name)} (유형 '${esc(d.type)}')` : "자동 (연결된 전략 없음)"}</option>${list.map(x => `<option value="${esc(x.id)}" ${d.strategy === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}<option value="none" ${d.strategy === "none" ? "selected" : ""}>전략 없이 한 매매</option></select>
+      ${s ? `<a href="#strategy" data-gost="${esc(s.id)}" style="font-size:12.5px">전략 보기</a>` : ""}${s?.summary ? `<span class="muted" style="font-size:12.5px;flex-basis:100%">${esc(s.summary)}</span>` : ""}</div>
+    ${s && (s.checklist || []).length ? `<div class="ck-box">${s.checklist.map((x, i) => `<label><input type="checkbox" data-ck="${i}" ${d.checks.includes(x) ? "checked" : ""}> ${esc(x)}</label>`).join("")}<small class="muted" id="t-ck-n"></small></div>`
+      : s ? `<span class="muted" style="font-size:12.5px">이 전략엔 체크리스트가 없어요.</span>` : ""}`;
+  const n = () => { const el = $("#t-ck-n"); if (el && s) el.textContent = `${s.checklist.filter(x => d.checks.includes(x)).length}/${s.checklist.length} 지킴`; };
+  n();
+  $("#t-strat-sel").onchange = e => { d.strategy = e.target.value || undefined; if (!d.strategy) delete d.strategy; renderTradeStrat(d); };
+  box.querySelectorAll("[data-ck]").forEach(c => c.onchange = () => { const x = s.checklist[+c.dataset.ck]; d.checks = c.checked ? [...new Set([...d.checks, x])] : d.checks.filter(y => y !== x); n(); });
+  const g = box.querySelector("[data-gost]"); if (g) g.onclick = () => { stratUi.sel = g.dataset.gost; const c = document.querySelector(".sheet-head [data-close]"); if (c) c.click(); };
+}
+
 /* ---------- 렌더: 설정 ---------- */
 function renderSetup() {
   const c = state.cfg;
@@ -1995,7 +2194,7 @@ function renderSetup() {
     if (!(fee >= 0 && fee < 0.05) || !(tax >= 0 && tax < 0.05)) { toast("수수료율과 세율은 0~5 사이 숫자로 적어주세요"); return; }
     const capRule = { small: parseFloat($("#cfg-cap-small").value.replace(/,/g, "")), big: parseFloat($("#cfg-cap-big").value.replace(/,/g, "")) };
     if (!(capRule.small > 0 && capRule.big > capRule.small)) { toast("시총 구간은 소형주 기준 < 수급주 기준인 숫자(억)로 적어주세요"); return; }
-    const cfg = { fee, tax, types: lines("#cfg-types"), moods: lines("#cfg-moods"), mistakes: lines("#cfg-mis"), usMap: state.cfg.usMap || {}, stockMemo: state.cfg.stockMemo || {}, stockKind: state.cfg.stockKind || {}, capRule, updatedAt: Date.now() };
+    const cfg = { fee, tax, types: lines("#cfg-types"), moods: lines("#cfg-moods"), mistakes: lines("#cfg-mis"), usMap: state.cfg.usMap || {}, stockMemo: state.cfg.stockMemo || {}, stockKind: state.cfg.stockKind || {}, strategies: state.cfg.strategies || [], capRule, updatedAt: Date.now() };
     try { await api.saveSettings(cfg); toast("설정을 저장했어요"); await refresh(); } catch (err) { toast(errMsg(err)); }
   };
   const ex = $("#exportCsv"); if (ex) ex.onclick = exportCsv;
@@ -2267,6 +2466,7 @@ function openTrade(id, opts = {}) {
         <div class="f" ${M ? "hidden" : ""}><span style="font-size:12px;color:var(--muted);font-weight:600">실수유형 (여러 개 선택 가능)</span><div class="toggles" id="t-mis"></div></div>
         ${M ? `<div class="f"><span style="font-size:12px;color:var(--muted);font-weight:600">안 한 이유 (여러 개 선택 가능) · '규칙 밖이라 참음'은 잘한 것</span><div class="toggles" id="t-miss"></div></div>` : ""}
       </section>
+      <section class="card strat-in" id="t-strat"></section>
       <section style="display:flex;flex-direction:column;gap:10px">
         <div class="section-head" style="margin:0"><h2 class="grow">참고한 뉴스</h2><button class="btn sm" type="button" id="refAdd">링크 직접 추가</button></div>
         <div class="ref-form" id="refForm" hidden></div>
@@ -2320,6 +2520,7 @@ function openTrade(id, opts = {}) {
     if ($("#t-kind").dataset.n !== nm || !$("#t-kind").innerHTML) { $("#t-kind").dataset.n = nm; $("#t-kind").innerHTML = nm ? kindSeg(nm) : `<span class="muted" style="font-size:12px">종목명을 적으면 고를 수 있어요</span>`; bindKindSeg($("#t-kind"), () => { $("#sh-kind").innerHTML = kindChipT(d); }); }
     $("#sh-kind").innerHTML = kindChipT(d);
     markAutoSeg($("#t-kind .kind-seg"), autoKind(d));
+    renderTradeStrat(d);
     const ak = autoKind(d), cap = tradeCap(d), kh = $("#t-kind-auto");
     if (kh) kh.textContent = !nm ? "" : cap != null ? `자동: ${ak} (당시 시총 ${capTxt(cap)})${stockKind(nm) && stockKind(nm) !== ak ? " · 직접 고른 분류가 먼저" : ""}` : "자동 분류: 당시 시총을 가져오는 중…";
     const st = $("#sh-title"); st.dataset.tipname = d.name || ""; st.classList.toggle("memo-dot", !!stockMemo(d.name || "")); st.tabIndex = stockMemo(d.name || "") ? 0 : -1;
@@ -2631,7 +2832,7 @@ function render() {
   const n = state.trades.filter(t => !t.missed).length, nm = state.trades.length - n;
   $("#countLabel").textContent = state.loaded ? `매매 ${n}건 기록됨${nm ? ` · 놓친 종목 ${nm}건` : ""}` : "기록을 불러오는 중";
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
-  if (v === "log") renderLog(); if (v === "stats") renderStats(); if (v === "notes") renderNotes(); if (v === "sectors") renderSectors(); if (v === "setup") renderSetup();
+  if (v === "log") renderLog(); if (v === "stats") renderStats(); if (v === "notes") renderNotes(); if (v === "sectors") renderSectors(); if (v === "strategy") renderStrategy(); if (v === "setup") renderSetup();
 }
 
 /* ---------- 로그인 · 데이터 연결 ---------- */
