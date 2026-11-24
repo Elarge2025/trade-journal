@@ -280,6 +280,10 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .kind-seg button[data-k="소형주"][aria-pressed="true"],.chip.k-소형주{background:#8A5A00;color:#fff}
 .kind-seg button[data-k="세력주"][aria-pressed="true"],.chip.k-세력주{background:#7A2BA8;color:#fff}
 .kind-seg button[data-k="수급주"][aria-pressed="true"],.chip.k-수급주{background:#1C5FA8;color:#fff}
+.kind-seg button.auto{border-style:dashed;border-width:1.5px;font-weight:700}
+.kind-seg button.auto[data-k="소형주"]{border-color:#8A5A00;color:#8A5A00;background:color-mix(in srgb,#8A5A00 10%,var(--surface))}
+.kind-seg button.auto[data-k="세력주"]{border-color:#7A2BA8;color:#7A2BA8;background:color-mix(in srgb,#7A2BA8 10%,var(--surface))}
+.kind-seg button.auto[data-k="수급주"]{border-color:#1C5FA8;color:#1C5FA8;background:color-mix(in srgb,#1C5FA8 10%,var(--surface))}
 .chip.kind{font-weight:700;font-size:11px;padding:1px 7px}
 .chip.kind.auto{background:transparent;border:1.5px dashed currentColor}
 .chip.kind.auto.k-소형주{color:#A06A00}.chip.kind.auto.k-세력주{color:#8E3CC0}.chip.kind.auto.k-수급주{color:#2A6FBF}
@@ -595,7 +599,7 @@ async function refresh() { try { await api.loadAll(); state.loaded = true; setSt
 /* ---- 비어 있는 데이터를 stock 함수로 바로 채우기 (GitHub 예약 실행이 밀려도 되게) ---- */
 let fillBusy = false, rerenderT = null;
 const tried = new Set();
-function softRender() { clearTimeout(rerenderT); rerenderT = setTimeout(() => { if (!sheet) render(); else { const d = sheet.draft; $("#sh-kind") && ($("#sh-kind").innerHTML = kindChipT(d)); renderUs(d.date, d.name, true); renderReview(d); } }, 300); }
+function softRender() { clearTimeout(rerenderT); rerenderT = setTimeout(() => { if (!sheet) render(); else { const d = sheet.draft; $("#sh-kind") && ($("#sh-kind").innerHTML = kindChipT(d)); markAutoSeg($("#t-kind .kind-seg"), autoKind(d)); const kh = $("#t-kind-auto"), cp = tradeCap(d); if (kh && d.name && cp != null) kh.textContent = `자동: ${autoKind(d)} (당시 시총 ${capTxt(cp)})${stockKind(d.name) && stockKind(d.name) !== autoKind(d) ? " · 직접 고른 분류가 먼저" : ""}`; renderUs(d.date, d.name, true); renderReview(d); } }, 300); }
 function lastWeekdayBefore(kstDate) { const d = new Date(kstDate + "T00:00:00"); do d.setDate(d.getDate() - 1); while (d.getDay() === 0 || d.getDay() === 6); return d.toISOString().slice(0, 10); }
 async function ensureUs(syms) {
   const kst = new Date(Date.now() + 9 * 3600e3), today = kst.toISOString().slice(0, 10);
@@ -1776,9 +1780,15 @@ function bindKindSeg(root, after) {
   root.querySelectorAll(".kind-seg").forEach(seg => seg.onclick = async e => {
     const b = e.target.closest("[data-k]"); if (!b) return; const name = seg.dataset.kname; if (!name) { toast("종목명을 먼저 적어 주세요"); return; }
     try { const k = await saveStockKind(name, b.dataset.k); toast(k ? `${name}: ${k}` : `${name} 분류를 지웠어요`); } catch (err) { toast(errMsg(err)); return; }
-    seg.querySelectorAll("[data-k]").forEach(x => x.setAttribute("aria-pressed", stockKind(name) === x.dataset.k)); after && after();
+    seg.querySelectorAll("[data-k]").forEach(x => x.setAttribute("aria-pressed", stockKind(name) === x.dataset.k)); markAutoSeg(seg, seg.dataset.auto || ""); after && after();
   });
 }
+// 직접 고른 분류가 없으면 시총 자동 분류를 점선 버튼으로 표시 (저장은 안 함, 누르면 직접 고른 분류로 고정)
+function markAutoSeg(seg, ak) {
+  if (!seg) return; seg.dataset.auto = ak || ""; const manual = stockKind(seg.dataset.kname || "");
+  seg.querySelectorAll("[data-k]").forEach(x => { const on = !manual && ak === x.dataset.k; x.classList.toggle("auto", on); x.title = (on ? "자동 선택 (당시 시총 기준) · 누르면 이 분류로 고정\n" : "") + KIND_INFO[x.dataset.k]; });
+}
+function nowKind(name) { const mv = state.caps.get(name)?.mvNow; if (mv == null) return ""; const r = state.cfg.capRule || { small: 3000, big: 50000 }; return mv < r.small ? "소형주" : mv >= r.big ? "수급주" : "세력주"; }
 async function saveStockMemo(name, text) {
   const map = { ...(state.cfg.stockMemo || {}) }; text = text.trim();
   if (text) map[name] = text; else delete map[name];
@@ -1894,7 +1904,7 @@ function renderSectors() {
   };
   const ai = $("#sec-add-in"), ab = $("#sec-add-btn");
   if (ab) { ab.onclick = () => addFrom(ai.value); ai.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); addFrom(ai.value); } }; }
-  bindKindSeg(box);
+  bindKindSeg(box); box.querySelectorAll(".kind-seg").forEach(sg => markAutoSeg(sg, nowKind(sg.dataset.kname)));
   box.querySelectorAll("[data-memo]").forEach(el => { const open = () => editStockMemo(el, el.dataset.memo, renderSectors); el.onclick = open; el.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); open(); } }; });
   const rf = $("#sec-refresh"); if (rf) rf.onclick = async () => { rf.disabled = true; rf.textContent = "가져오는 중…"; const n = await refreshQuotes(cur.stocks); if (n) toast(`${n}종목 새로고침했어요`);
     const fixed = cur.stocks.map(x => { const L = liveCache.get(x.name)?.data; return !x.code && L?.code ? { ...x, code: L.code, market: L.market || x.market } : x; });
@@ -2309,6 +2319,7 @@ function openTrade(id, opts = {}) {
     const nm = (d.name || "").trim();
     if ($("#t-kind").dataset.n !== nm || !$("#t-kind").innerHTML) { $("#t-kind").dataset.n = nm; $("#t-kind").innerHTML = nm ? kindSeg(nm) : `<span class="muted" style="font-size:12px">종목명을 적으면 고를 수 있어요</span>`; bindKindSeg($("#t-kind"), () => { $("#sh-kind").innerHTML = kindChipT(d); }); }
     $("#sh-kind").innerHTML = kindChipT(d);
+    markAutoSeg($("#t-kind .kind-seg"), autoKind(d));
     const ak = autoKind(d), cap = tradeCap(d), kh = $("#t-kind-auto");
     if (kh) kh.textContent = !nm ? "" : cap != null ? `자동: ${ak} (당시 시총 ${capTxt(cap)})${stockKind(nm) && stockKind(nm) !== ak ? " · 직접 고른 분류가 먼저" : ""}` : "자동 분류: 당시 시총을 가져오는 중…";
     const st = $("#sh-title"); st.dataset.tipname = d.name || ""; st.classList.toggle("memo-dot", !!stockMemo(d.name || "")); st.tabIndex = stockMemo(d.name || "") ? 0 : -1;
