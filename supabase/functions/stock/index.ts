@@ -2,6 +2,11 @@
 // 사이트(브라우저)는 네이버에 직접 물어볼 수 없어서, 이 함수가 대신 물어보고 결과를 돌려준다.
 //   { action: "search", q: "휴림" }               → 이름이 맞는 종목 후보 [{ name, code, market }]
 //   { action: "quote", stocks: [{ name, code }] } → 종목마다 현재가·전일 종가·최근 7일 일봉·최근 뉴스 (stock_live에도 저장)
+//   { action: "news", name, code?, from, to }     → 그 종목의 기간 뉴스 (news에도 저장)
+//   { action: "usnews", syms }                     → 미국 관련주 뉴스
+//   { action: "caps", items: [{ name, code?, dates }] } → 매매 당시 시가총액 (stock_caps에도 저장)
+//   { action: "article", urls }                    → 참고한 기사 제목·요약·사진·본문 (articles에도 저장)
+//   { action: "us", syms }                         → 미국 지수·종목 일별 종가·등락률 (us_prices에도 저장)
 // Supabase 대시보드 Edge Functions에서 이 파일 내용을 그대로 붙여넣어 'stock'이라는 이름으로 배포.
 
 const CORS = {
@@ -207,6 +212,146 @@ async function saveLive(rows: { name: string; data: unknown }[]) {
   await fetch(`${base}/rest/v1/stock_live?on_conflict=name`, { method: "POST", headers: h, body: JSON.stringify(rows.map(r => ({ ...r, updated_at: now }))) }).catch(() => {});
 }
 
+// ---------- Supabase 표 읽기·쓰기 (서비스 키) ----------
+function sbHeaders(extra: Record<string, string> = {}) {
+  const k = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  const h: Record<string, string> = { apikey: k, "Content-Type": "application/json", ...extra };
+  if (k.startsWith("eyJ")) h.Authorization = `Bearer ${k}`;
+  return h;
+}
+async function sbGet(path: string) {
+  const base = Deno.env.get("SUPABASE_URL"); if (!base) return [];
+  const r = await fetch(`${base}/rest/v1/${path}`, { headers: sbHeaders() }).catch(() => null);
+  return r && r.ok ? await r.json() : [];
+}
+async function sbUpsert(table: string, conflict: string, rows: unknown[]) {
+  const base = Deno.env.get("SUPABASE_URL"); if (!base || !rows.length) return;
+  await fetch(`${base}/rest/v1/${table}?on_conflict=${conflict}`, { method: "POST", headers: sbHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify(rows) }).catch(() => {});
+}
+const inList = (xs: string[]) => `(${xs.map(x => `"${String(x).replace(/"/g, '\\"')}"`).join(",")})`;
+
+// ---------- 매매 당시 시가총액 ----------
+const eok = (v: unknown) => {
+  const t = String(v ?? "").replace(/[,\s원]/g, "");
+  const m = t.match(/^(?:([\d.]+)조)?(?:([\d.]+)억)?$/);
+  if (!m || (!m[1] && !m[2])) return null;
+  return parseFloat(m[1] || "0") * 10000 + parseFloat(m[2] || "0");
+};
+async function sharesOf(code: string) {
+  let price: number | null = null, mv: number | null = null, shares: number | null = null;
+  try { const b = JSON.parse(await get(`https://m.stock.naver.com/api/stock/${code}/basic`)); price = num(b.closePrice); mv = eok(b.marketValue) ?? mv; } catch (_) { /* */ }
+  try {
+    const objs: Record<string, unknown>[] = [];
+    (function w(o: unknown) { if (Array.isArray(o)) o.forEach(w); else if (o && typeof o === "object") { objs.push(o as Record<string, unknown>); Object.values(o).forEach(w); } })(JSON.parse(await get(`https://m.stock.naver.com/api/stock/${code}/integration`)));
+    for (const o of objs) {
+      if (o.value == null) continue;
+      const key = String(o.code ?? o.key ?? ""), label = String(o.key ?? o.name ?? o.title ?? "");
+      if (key === "marketValue" || /시총|시가총액/.test(label)) mv = eok(o.value) ?? mv;
+      if (/listedStock/i.test(key) || /상장주식/.test(label)) shares = num(o.value) ?? shares;
+    }
+  } catch (_) { /* */ }
+  if (!shares && mv && price) shares = mv * 1e8 / price;
+  return { shares, mv };
+}
+async function closesRange(code: string, from: string, to: string) {
+  const f = (d: string) => d.replace(/-/g, "");
+  const start = new Date(new Date(from).getTime() - 12 * 864e5).toISOString().slice(0, 10);
+  const txt = await get(`https://api.finance.naver.com/siseJson.naver?symbol=${code}&requestType=1&startTime=${f(start)}&endTime=${f(to)}&timeframe=day`, "https://finance.naver.com/");
+  const out: Record<string, number> = {};
+  for (const m of txt.matchAll(/\[\s*"(\d{8})"\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)/g)) out[`${m[1].slice(0, 4)}-${m[1].slice(4, 6)}-${m[1].slice(6)}`] = +m[2];
+  return out;
+}
+async function capsFor(items: { name: string; code?: string; dates: string[] }[]) {
+  const names = items.map(i => i.name);
+  const have: Record<string, Record<string, unknown>> = {};
+  for (const r of await sbGet(`stock_caps?select=name,data&name=in.${encodeURIComponent(inList(names))}`)) have[r.name] = r.data || {};
+  const now = new Date().toISOString(), rows: { name: string; data: Record<string, unknown>; updated_at: string }[] = [];
+  await Promise.all(items.map(async it => {
+    const old = have[it.name] || {};
+    const data: Record<string, unknown> = { ...old, caps: { ...(old.caps as Record<string, number> || {}) } };
+    let code = cleanCode(it.code) || cleanCode(old.code);
+    if (!code) { const c = await search(it.name); code = (c.find(x => x.name === it.name) ?? c[0])?.code ?? ""; }
+    data.code = code;
+    const dates = [...new Set(it.dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort();
+    if (!code) { data.status = "nocode"; } else if (dates.length) {
+      try {
+        let sh = old.shares as number | undefined;
+        if (!sh || String(old.sharesAt || "") < new Date(Date.now() - 30 * 864e5).toISOString()) { const r = await sharesOf(code); sh = r.shares ?? undefined; data.shares = sh; data.sharesAt = now; data.mvNow = r.mv; }
+        if (!sh) throw new Error("상장주식수 없음");
+        const cl = await closesRange(code, dates[0], dates[dates.length - 1]), known = Object.keys(cl).sort();
+        for (const d of dates) { const prev = known.filter(k => k <= d).pop(); if (prev) (data.caps as Record<string, number>)[d] = Math.round(sh * cl[prev] / 1e8); }
+        data.status = "ok";
+      } catch (e) { data.status = "error"; data.error = String(e).slice(0, 200); }
+    }
+    data.fetchedAt = now;
+    rows.push({ name: it.name, data, updated_at: now });
+  }));
+  await sbUpsert("stock_caps", "name", rows);
+  return rows.map(r => ({ name: r.name, data: r.data }));
+}
+
+// ---------- 참고한 기사 본문 ----------
+async function getPage(url: string) {
+  const r = await fetch(url, { headers: { "User-Agent": UA, Referer: "https://www.naver.com/", Accept: "text/html,*/*" } });
+  if (!r.ok) throw new Error(String(r.status));
+  const buf = new Uint8Array(await r.arrayBuffer());
+  let cs = (r.headers.get("content-type") || "").match(/charset=([\w-]+)/i)?.[1] || "";
+  if (!cs) cs = new TextDecoder("utf-8").decode(buf.slice(0, 3000)).match(/<meta[^>]+charset=["']?([\w-]+)/i)?.[1] || "utf-8";
+  try { return new TextDecoder(cs.toLowerCase()).decode(buf); } catch { return new TextDecoder("utf-8").decode(buf); }
+}
+function metaOf(h: string, ...names: string[]) {
+  for (const n of names) {
+    const e = n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = h.match(new RegExp(`<meta[^>]+(?:property|name)=["']${e}["'][^>]*content=["']([^"']*)`, "i")) || h.match(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*(?:property|name)=["']${e}["']`, "i"));
+    if (m && m[1].trim()) return unesc(m[1]);
+  }
+  return "";
+}
+function blockText(h: string) {
+  h = h.replace(/<(script|style|noscript|button|figcaption)[^>]*>[\s\S]*?<\/\1>/gi, " ").replace(/<em[^>]*class=["'][^"']*img_desc[^"']*["'][^>]*>[\s\S]*?<\/em>/gi, " ");
+  h = h.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|h\d|li|tr)>/gi, "\n");
+  const t = h.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+  return t.split("\n").map(l => l.replace(/[ \t\u00a0]+/g, " ").trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+async function article(url: string) {
+  const h = await getPage(url);
+  const data: Record<string, unknown> = { title: metaOf(h, "og:title", "twitter:title"), desc: metaOf(h, "og:description", "description", "twitter:description"),
+    img: metaOf(h, "og:image", "twitter:image"), press: metaOf(h, "og:article:author", "twitter:creator", "og:site_name").replace(/\s*[|｜:]\s*(네이버|NAVER|naver)\s*$/, "") };
+  const dt = h.match(/data-date-time="([\d\- :]+)"/); if (dt) data.t = dt[1].slice(0, 16);
+  let body = "";
+  const m = h.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/i);
+  if (m) body = blockText(m[1]);
+  if (!body) {
+    const scope = h.match(/<article[^>]*>([\s\S]*?)<\/article>/i)?.[1] || h;
+    body = [...scope.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)].map(x => unesc(x[1].replace(/\s+/g, " "))).filter(x => x.length > 30).join("\n\n");
+  }
+  data.body = body.slice(0, 20000);
+  data.status = body || data.desc ? "ok" : "nobody";
+  return data;
+}
+
+// ---------- 미국 시세 ----------
+async function usPrices(syms: string[]) {
+  const have: Record<string, Record<string, unknown>> = {};
+  for (const r of await sbGet(`us_prices?select=sym,data&sym=in.${encodeURIComponent(inList(syms))}`)) have[r.sym] = r.data || {};
+  const now = new Date().toISOString(), rows: { sym: string; data: Record<string, unknown>; updated_at: string }[] = [];
+  await Promise.all(syms.map(async sym => {
+    const old = have[sym] || {}, oldD = (old.d || {}) as Record<string, [number, number | null]>;
+    const rng = Object.keys(oldD).length ? "1mo" : "2y";
+    try {
+      const j = JSON.parse(await get(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=${rng}&interval=1d`, "https://finance.yahoo.com/"));
+      const res = j.chart.result[0], off = res.meta.gmtoffset ?? -18000, cl = res.indicators.quote[0].close as (number | null)[];
+      const merged: Record<string, number> = {}; for (const [d, v] of Object.entries(oldD)) merged[d] = v[0];
+      (res.timestamp as number[] || []).forEach((ts, i) => { const c = cl[i]; if (c != null) merged[new Date((ts + off) * 1000).toISOString().slice(0, 10)] = Math.round(c * 1e4) / 1e4; });
+      const d: Record<string, [number, number | null]> = {}; let prev: number | null = null;
+      for (const k of Object.keys(merged).sort()) { const c = merged[k]; d[k] = [c, prev ? Math.round((c / prev - 1) * 1e4) / 100 : null]; prev = c; }
+      rows.push({ sym, data: { ...old, d, name: old.name || res.meta.shortName || "", src: "yahoo", status: "ok" }, updated_at: now });
+    } catch (e) { if (!Object.keys(oldD).length) rows.push({ sym, data: { d: {}, status: "error", error: String(e).slice(0, 200) }, updated_at: now }); }
+  }));
+  await sbUpsert("us_prices", "sym", rows);
+  return rows.map(r => ({ sym: r.sym, data: r.data }));
+}
+
 Deno.serve(async req => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "POST만 받아요" }, 405);
@@ -218,7 +363,8 @@ Deno.serve(async req => {
   const who = await fetch(`${base}/auth/v1/user`, { headers: { Authorization: auth, apikey } });
   if (!who.ok) return json({ error: "로그인이 만료됐어요. 다시 로그인해 주세요" }, 401);
 
-  let body: { action?: string; q?: string; stocks?: { name: string; code?: string }[]; name?: string; code?: string; from?: string; to?: string; syms?: string[]; date?: string };
+  let body: { action?: string; q?: string; stocks?: { name: string; code?: string }[]; name?: string; code?: string; from?: string; to?: string; syms?: string[]; date?: string;
+    items?: { name: string; code?: string; dates: string[] }[]; urls?: string[] };
   try { body = await req.json(); } catch { return json({ error: "잘못된 요청이에요" }, 400); }
 
   if (body.action === "search") return json({ items: await search(String(body.q ?? "")) });
@@ -243,5 +389,24 @@ Deno.serve(async req => {
     const items = lists.flat().sort((a, b) => b.t.localeCompare(a.t)).filter(x => !seen.has(x.title) && !!seen.add(x.title));
     return json({ items: items.slice(0, 60) });
   }
-  return json({ error: "action은 search, quote, news, usnews 중 하나" }, 400);
+  if (body.action === "caps") {
+    const items = (body.items ?? []).filter(i => i && i.name && Array.isArray(i.dates)).slice(0, 25);
+    return json({ items: await capsFor(items) });
+  }
+  if (body.action === "article") {
+    const urls = [...new Set((body.urls ?? []).filter(u => /^https?:\/\//i.test(String(u))))].slice(0, 8);
+    const now = new Date().toISOString();
+    const rows = await Promise.all(urls.map(async url => {
+      let data: Record<string, unknown>;
+      try { data = await article(url); } catch (e) { data = { status: "error", error: String(e).slice(0, 200) }; }
+      data.fetchedAt = now; return { url, data, updated_at: now };
+    }));
+    await sbUpsert("articles", "url", rows);
+    return json({ items: rows.map(r => ({ url: r.url, data: r.data })) });
+  }
+  if (body.action === "us") {
+    const syms = [...new Set((body.syms ?? []).map(x => String(x).toUpperCase().trim()).filter(x => /^\^?[A-Z0-9.\-]{1,12}$/.test(x)))].slice(0, 20);
+    return json({ items: await usPrices(syms) });
+  }
+  return json({ error: "action은 search, quote, news, usnews, caps, article, us 중 하나" }, 400);
 });

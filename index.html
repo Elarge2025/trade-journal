@@ -591,7 +591,46 @@ function applyCfg(c) {
     stockKind: c.stockKind && typeof c.stockKind === "object" ? c.stockKind : {},
     capRule: { small: +(c.capRule?.small) > 0 ? +c.capRule.small : 3000, big: +(c.capRule?.big) > 0 ? +c.capRule.big : 50000 } };
 }
-async function refresh() { try { await api.loadAll(); state.loaded = true; setStatus(""); } catch (e) { setStatus("기록을 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.", true); } render(); }
+async function refresh() { try { await api.loadAll(); state.loaded = true; setStatus(""); } catch (e) { setStatus("기록을 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.", true); } render(); if (state.loaded) setTimeout(fillMissing, 400); }
+/* ---- 비어 있는 데이터를 stock 함수로 바로 채우기 (GitHub 예약 실행이 밀려도 되게) ---- */
+let fillBusy = false, rerenderT = null;
+const tried = new Set();
+function softRender() { clearTimeout(rerenderT); rerenderT = setTimeout(() => { if (!sheet) render(); else { const d = sheet.draft; $("#sh-kind") && ($("#sh-kind").innerHTML = kindChipT(d)); renderUs(d.date, d.name, true); renderReview(d); } }, 300); }
+function lastWeekdayBefore(kstDate) { const d = new Date(kstDate + "T00:00:00"); do d.setDate(d.getDate() - 1); while (d.getDay() === 0 || d.getDay() === 6); return d.toISOString().slice(0, 10); }
+async function ensureUs(syms) {
+  const kst = new Date(Date.now() + 9 * 3600e3), today = kst.toISOString().slice(0, 10);
+  const want = kst.getUTCHours() >= 7 ? lastWeekdayBefore(today) : lastWeekdayBefore(lastWeekdayBefore(today));
+  const stale = syms.filter(s => { const d = state.us.get(s)?.d; if (!d) return !tried.has("us:" + s); const last = Object.keys(d).sort().pop(); return last < want && !tried.has("us:" + s); });
+  if (!stale.length) return false;
+  stale.forEach(s => tried.add("us:" + s));
+  const r = await callStock({ action: "us", syms: stale }); if (!r) return false;
+  (r.items || []).forEach(x => { if (x.data && x.data.d && Object.keys(x.data.d).length) state.us.set(x.sym, x.data); });
+  return true;
+}
+async function ensureCaps(list) {
+  const need = new Map();
+  for (const t of list) {
+    if (!t.name || !/^\d{4}-\d{2}-\d{2}$/.test(t.date || "") || tradeCap(t) != null) continue;
+    const k = "cap:" + t.name + "|" + t.date; if (tried.has(k)) continue;
+    if (state.caps.get(t.name)?.status === "nocode") continue;
+    if (!need.has(t.name)) need.set(t.name, { name: t.name, code: String(t.code || histCode(t.name) || state.caps.get(t.name)?.code || "").replace(/^A/, ""), dates: [] });
+    need.get(t.name).dates.push(t.date); tried.add(k);
+  }
+  const items = [...need.values()]; let got = 0;
+  for (let i = 0; i < items.length; i += 12) {
+    const r = await callStock({ action: "caps", items: items.slice(i, i + 12) }); if (!r) break;
+    (r.items || []).forEach(x => state.caps.set(x.name, x.data)); got += (r.items || []).length; softRender();
+  }
+  return got;
+}
+async function fillMissing() {
+  if (fillBusy || !session) return; fillBusy = true;
+  try {
+    const syms = [...new Set([...US_IDX.map(x => x[0]), ...Object.values(state.cfg.usMap || {}).flat()])];
+    if (await ensureUs(syms)) softRender();
+    if (stockFn.ok !== false) await ensureCaps([...state.trades].sort((a, b) => (b.date || "").localeCompare(a.date || "")));
+  } finally { fillBusy = false; }
+}
 
 /* ---------- 계산 ---------- */
 function calc(t, cfg = state.cfg) {
@@ -901,10 +940,10 @@ function renderUs(date, name, force) {
   const chip = x => `<span class="us-chip"><small>${esc(x.label)}</small><b class="num ${cls(x.pct)}">${x.pct == null ? "–" : (x.pct > 0 ? "+" : "") + x.pct.toFixed(2) + "%"}</b></span>`;
   const syms = usSyms(name);
   box.innerHTML = `<div class="mkt-head"><b>전날 미국장</b><span>${L ? esc(L.ud) + "(" + wd(L.ud) + ") 마감 · 한국 " + esc(date || "") + " 아침 기준" : "날짜를 넣으면 그 전 미국장 등락이 나와요"}</span></div>
-    ${!date ? "" : !L ? `<div class="mkt-empty">미국 시세가 아직 없어요. Supabase에 us_prices 표를 만들면 매시 10분·40분에 채워져요.</div>` : `<div class="us-row"><span class="us-lab">지수</span>${L.idx.map(chip).join("")}</div>`}
+    ${!date ? "" : !L ? `<div class="mkt-empty">미국 시세를 가져오는 중이거나 아직 없어요. 잠시 뒤 다시 열어 주세요.</div>` : `<div class="us-row"><span class="us-lab">지수</span>${L.idx.map(chip).join("")}</div>`}
     ${name ? `<div class="us-row" style="margin-top:8px"><span class="us-lab">관련주</span>${L && syms.length ? L.rel.map(chip).join("") : syms.length ? syms.map(s => chip({ label: s, pct: null })).join("") : `<span class="muted" style="font-size:12.5px">${esc(name)}의 미국 관련주를 정해두면 이 종목 매매마다 나와요</span>`}
       <button type="button" class="btn sm" id="us-edit-btn">${syms.length ? "바꾸기" : "정하기"}</button></div>
-      ${L && syms.some(s => !state.us.get(s)) ? `<div class="mkt-empty" style="margin-top:6px">새로 정한 종목 시세는 매시 10분·40분쯤 채워져요 (새로고침 후 보임).</div>` : ""}
+      ${L && syms.some(s => !state.us.get(s)) ? `<div class="mkt-empty" style="margin-top:6px">새로 정한 종목 시세를 가져오는 중이에요.</div>` : ""}
       ${syms.length ? `<div id="us-news" style="margin-top:10px"></div>` : ""}
       <div class="us-edit" id="us-edit" hidden><input class="inp" id="us-in" placeholder="미국 티커를 쉼표로 · 예: TSLA, NVDA, ISRG" value="${esc(syms.join(", "))}" autocomplete="off"><button type="button" class="btn primary" id="us-save">저장</button></div>` : ""}`;
   const eb = $("#us-edit-btn"); if (eb) eb.onclick = () => { const e = $("#us-edit"); e.hidden = !e.hidden; if (!e.hidden) $("#us-in").focus(); };
@@ -913,7 +952,7 @@ function renderUs(date, name, force) {
     const bad = list.filter(x => !/^\^?[A-Z0-9.\-]{1,12}$/.test(x)); if (bad.length) { toast("티커를 확인해 주세요: " + bad.join(", ")); return; }
     const map = { ...(state.cfg.usMap || {}) }; if (list.length) map[name] = list; else delete map[name];
     sv.disabled = true;
-    try { await api.saveSettings({ ...state.cfg, usMap: map, updatedAt: Date.now() }); state.cfg.usMap = map; toast(list.length ? `${name} 관련주를 저장했어요` : "관련주를 지웠어요"); renderUs(date, name, true); }
+    try { await api.saveSettings({ ...state.cfg, usMap: map, updatedAt: Date.now() }); state.cfg.usMap = map; toast(list.length ? `${name} 관련주를 저장했어요` : "관련주를 지웠어요"); renderUs(date, name, true); if (await ensureUs(list)) renderUs(date, name, true); }
     catch (err) { toast(errMsg(err)); sv.disabled = false; }
   };
   if (syms.length && date) loadUsNews(date, syms);
@@ -959,6 +998,12 @@ const artCache = new Map();
 async function loadArticles(urls) {
   const need = [...new Set(urls)].filter(u => u && !artCache.get(u)); if (!need.length) return;
   try { const r = await sb.from("articles").select("url, data").in("url", need); if (!r.error) { need.forEach(u => artCache.set(u, null)); r.data.forEach(x => artCache.set(x.url, x.data)); } } catch {}
+  const miss = need.filter(u => !artCache.get(u) && !tried.has("art:" + u));
+  if (miss.length && stockFn.ok !== false) {
+    miss.forEach(u => tried.add("art:" + u));
+    const r = await callStock({ action: "article", urls: miss.slice(0, 8) });
+    (r?.items || []).forEach(x => artCache.set(x.url, x.data));
+  }
 }
 function renderRefs(fetched) {
   const box = $("#refList"); if (!box || !sheet) return; const refs = sheet.draft.newsRefs || [];
@@ -974,7 +1019,7 @@ function renderRefs(fetched) {
         <div class="ref-meta">${[r.press || art?.press, (r.t || art?.t || "").slice(5), r.after ? "진입 후 기사" : ""].filter(Boolean).map(esc).join(" · ")}</div></div>
         ${img ? `<img class="ref-thumb" src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}</div>
       <div class="ref-acts">
-        ${body ? `<button type="button" class="btn sm" data-body="${i}">${open.has(r.url) ? "본문 접기" : "본문 보기"}</button>` : r.url ? `<span class="muted" style="font-size:12px;align-self:center">${pending ? "본문은 저장 후 매시 10분·40분쯤 가져와요" : art?.status === "error" ? "본문을 못 가져왔어요. 제목을 눌러 원문에서 보세요" : ""}</span>` : ""}
+        ${body ? `<button type="button" class="btn sm" data-body="${i}">${open.has(r.url) ? "본문 접기" : "본문 보기"}</button>` : r.url ? `<span class="muted" style="font-size:12px;align-self:center">${pending ? "본문을 가져오는 중이에요. 잠시 뒤 다시 열면 보여요" : art?.status === "error" ? "본문을 못 가져왔어요. 제목을 눌러 원문에서 보세요" : ""}</span>` : ""}
         <span style="flex:1"></span><button type="button" class="btn sm" data-unref="${i}">빼기</button></div>
       ${body ? `<div class="ref-body" data-u="${esc(r.url)}" ${open.has(r.url) ? "" : "hidden"}>${esc(body)}</div>` : ""}
       <textarea class="inp" data-refnote="${i}" placeholder="이 기사에서 본 것 · 재료의 크기, 처음 나온 재료인지, 시장이 어떻게 반응했는지">${esc(r.note || "")}</textarea></div>`; }).join("")
@@ -1054,9 +1099,12 @@ async function renderNews(date, name, fx, force) {
   if (!date || !name) { box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b></div><div class="mkt-empty">날짜와 종목명을 넣으면 전 거래일~그날 뉴스가 나와요.</div>`; return; }
   box.innerHTML = head(`${esc(sel)} · 불러오는 중…`); bindBar();
   let v = await getNews(date, sel);
-  if (isPeer && (!v || v.error || !v.items)) {
+  if ((!v || (v.error && !/exist|find|relation/i.test(v.error)) || !v.items) && !tried.has("news:" + date + "|" + sel)) {
+    tried.add("news:" + date + "|" + sel);
+    if (!isPeer && box.isConnected) box.innerHTML = head(`${esc(sel)} · 네이버에서 가져오는 중…`), bindBar();
     const stock = sectorsOf(name).flatMap(s => s.stocks).find(x => x.name === sel);
-    const r = await callStock({ action: "news", name: sel, code: stock?.code || "", from: prevTradingDay(date), to: date });
+    const own = !isPeer ? (sheet?.draft.code || histCode(sel) || state.caps.get(sel)?.code || "") : "";
+    const r = await callStock({ action: "news", name: sel, code: String(stock?.code || own || "").replace(/^A/, ""), from: prevTradingDay(date), to: date });
     if (r?.data) { v = r.data; if (v.items) newsCache.set(date + "|" + sel, v); }
     else if (stockFn.ok === false) v = { error: "nofn" };
   }
@@ -1065,7 +1113,7 @@ async function renderNews(date, name, fx, force) {
   if (!v || v.error || !v.items) {
     const why = v?.error === "nofn" ? "같은 섹터 종목 뉴스는 stock 함수가 있어야 바로 가져와요. 아래 링크로 보세요."
       : v?.error ? (/news/.test(v.error) && /exist|find|relation/i.test(v.error) ? "Supabase에 news 표를 먼저 만들어 주세요 (setup.sql 맨 아래)." : "뉴스를 불러오지 못했어요.")
-      : isPeer ? "뉴스를 가져오지 못했어요. 아래 링크로 보세요." : "아직 안 가져왔어요. 저장해 두면 매시 10분쯤 자동으로 채워져요. 그 전엔 아래 링크로 보세요.";
+      : "뉴스를 가져오지 못했어요. 아래 링크로 보세요.";
     box.innerHTML = `${head(esc(sel))}<div class="mkt-empty">${why}</div>${newsLinks(date, sel, code)}`; bindBar(); return;
   }
   if (v.status === "nocode") { box.innerHTML = `${head(esc(sel))}<div class="mkt-empty">종목명으로 종목코드를 못 찾았어요. 종목명이 영웅문 표기와 같은지 확인해 주세요.</div>${newsLinks(date, sel, "")}`; bindBar(); return; }
@@ -1528,7 +1576,7 @@ function renderStats() {
           <p class="muted" style="font-size:12px;margin:8px 0 0">건수가 많고 기대값이 플러스인 유형이 내 무기예요.</p></div>
         <div class="card"><h3>종목 유형별 성과 (소형주·세력주·수급주)</h3>${(() => { const done = list.filter(t => t.c), tagged = done.filter(t => t.kind);
           return tagged.length ? bucketTable(done, "종목 유형", t => t.kind || "시총 정보 없음", [...KINDS, "시총 정보 없음"]) + `<p class="muted" style="font-size:12px;margin:8px 0 0">매매 당시 시총으로 자동 분류해요 (설정에서 구간 변경: 소형주 ${capTxt((state.cfg.capRule || { small: 3000 }).small)} 미만 · 수급주 ${capTxt((state.cfg.capRule || { big: 50000 }).big)} 이상). 직접 고른 분류가 있으면 그게 먼저예요. 미모사는 소형주는 소액이라도 매매하지 않아요.</p>`
-            : `<p class="muted">매매 당시 시가총액이 채워지면(매시 10분·40분) 소형주·세력주·수급주로 자동 분류돼서 유형별 승률과 손익이 여기에 나와요. Supabase에 stock_caps 표가 있어야 해요.</p>`; })()}</div>
+            : `<p class="muted">매매 당시 시가총액이 채워지면(사이트를 열면 자동으로 채움) 소형주·세력주·수급주로 자동 분류돼서 유형별 승률과 손익이 여기에 나와요. Supabase에 stock_caps 표가 있어야 해요.</p>`; })()}</div>
         <div class="card"><h3>시간대별 성과</h3>${timeSection(list)}</div>
         <div class="card"><h3>시장 흐름별 성과</h3>${marketBreakdown(list)}
           <p class="muted" style="font-size:12px;margin:8px 0 0">지수가 빠지는 날 성과가 나쁘다면, 그런 날은 비중을 줄이는 규칙을 세워 보세요.</p></div>
@@ -1784,7 +1832,7 @@ function renderSectors() {
       ${items.length ? `<ul class="news-list">${items.slice(0, N).map(x => { const d = x.t.slice(0, 10), h = d !== lastDay ? `<li class="news-day">${esc(d)}</li>` : ""; lastDay = d;
           return `${h}<li><time>${esc(x.t.slice(11))}</time><a href="${esc(x.url)}" target="_blank" rel="noopener"><span class="stk">${esc(x.stk)}</span>${esc(x.title)}</a><small>${esc(x.press)}</small></li>`; }).join("")}</ul>
         ${items.length > N ? `<button class="btn sm" type="button" id="sec-more" style="margin-top:8px">${items.length - N}건 더 보기</button>` : ""}`
-      : `<p class="muted">${names.length ? "아직 뉴스를 안 가져왔어요. 종목을 넣으면 매시 10분·40분쯤 종목마다 최근 뉴스 20건씩 채워져요." : "먼저 위에서 종목을 넣어 주세요."}</p>`}`;
+      : `<p class="muted">${names.length ? "뉴스를 가져오는 중이에요. 안 나오면 '지금 새로고침'을 눌러 주세요." : "먼저 위에서 종목을 넣어 주세요."}</p>`}`;
   } else if (cur && secUi.sub === "stocks") {
     const rows = names.map(n => { const L = live(n), mine = trades.filter(t => t.name === n && !t.missed), done = mine.filter(t => t.c);
       return { n, L, cnt: mine.length, pnl: done.reduce((a, t) => a + t.c.pnl, 0), last: L?.news?.[0]?.t || "" }; }).sort((a, b) => (b.L?.chgPct ?? -999) - (a.L?.chgPct ?? -999));
@@ -1792,7 +1840,7 @@ function renderSectors() {
       ${rows.map(r => `<tr><td><b>${esc(r.n)}</b> <span class="muted num" style="font-size:12px">${esc(r.L?.code || "")}${r.L?.market ? " · " + esc(r.L.market) : ""}</span></td><td class="num" style="text-align:right">${r.L?.price != null ? Math.round(r.L.price).toLocaleString("ko-KR") : "–"}</td>
         <td class="num ${cls(r.L?.chgPct)}" style="text-align:right;font-weight:600">${pctTxt(r.L?.chgPct)}</td><td class="num" style="text-align:right">${r.L?.prevClose != null ? Math.round(r.L.prevClose).toLocaleString("ko-KR") : "–"}</td><td style="text-align:center">${miniCandles(r.L?.candles)}</td><td class="muted" style="font-size:12.5px;text-align:left">${esc(r.last ? r.last.slice(5) : "–")}</td>
         <td class="num" style="text-align:right">${r.cnt || "–"}</td><td class="num ${cls(r.pnl)}" style="text-align:right">${r.cnt ? signed(r.pnl) : "–"}</td></tr>`).join("")}</tbody></table></div>
-      <p class="muted" style="font-size:12px;margin:8px 0 0">'지금 새로고침'을 누르면 바로, 아니면 매시 10분·40분쯤 갱신돼요. ${(() => { const a = names.map(n => live(n)?.asOf).filter(Boolean).sort().pop(); return a ? "마지막 기준 " + esc(a.replace("T", " ").slice(0, 16)) : ""; })()}</p>`
+      <p class="muted" style="font-size:12px;margin:8px 0 0">탭을 열 때 25분 넘은 시세는 자동으로 새로 가져와요. '지금 새로고침'은 바로. ${(() => { const a = names.map(n => live(n)?.asOf).filter(Boolean).sort().pop(); return a ? "마지막 기준 " + esc(a.replace("T", " ").slice(0, 16)) : ""; })()}</p>`
       : `<p class="muted">먼저 위에서 종목을 넣어 주세요.</p>`;
   } else if (cur && secUi.sub === "trades") {
     const S = summarize(trades);
@@ -1852,7 +1900,11 @@ function renderSectors() {
     const fixed = cur.stocks.map(x => { const L = liveCache.get(x.name)?.data; return !x.code && L?.code ? { ...x, code: L.code, market: L.market || x.market } : x; });
     if (fixed.some((x, i) => x !== cur.stocks[i])) await save(fixed); else renderSectors(); };
   const qa = $("#sec-q-add"); if (qa) qa.onclick = () => { const v = secUi.q; secUi.q = ""; addFrom(v); };
-  if (cur && names.some(n => !liveCache.has(n) || Date.now() - liveCache.get(n).at > 5 * 60e3)) loadLive(names).then(() => { if (location.hash === "#sectors" && secUi.sel === cur.id) renderSectors(); });
+  if (cur && names.some(n => !liveCache.has(n) || Date.now() - liveCache.get(n).at > 5 * 60e3)) loadLive(names).then(async () => {
+    if (location.hash === "#sectors" && secUi.sel === cur.id) renderSectors();
+    const stale = cur.stocks.filter(x => { const L = liveCache.get(x.name)?.data; return (!L || !L.fetchedAt || Date.now() - Date.parse(L.fetchedAt) > 25 * 60e3) && !tried.has("q:" + x.name + Math.floor(Date.now() / 6e5)); });
+    if (stale.length && stockFn.ok !== false) { stale.forEach(x => tried.add("q:" + x.name + Math.floor(Date.now() / 6e5))); if (await refreshQuotes(stale, true) && location.hash === "#sectors" && secUi.sel === cur.id) renderSectors(); }
+  });
 }
 function sectorForm(sc) {
   const isNew = !sc; sc = sc || { name: "", memo: "", stocks: [] };
@@ -2258,7 +2310,7 @@ function openTrade(id, opts = {}) {
     if ($("#t-kind").dataset.n !== nm || !$("#t-kind").innerHTML) { $("#t-kind").dataset.n = nm; $("#t-kind").innerHTML = nm ? kindSeg(nm) : `<span class="muted" style="font-size:12px">종목명을 적으면 고를 수 있어요</span>`; bindKindSeg($("#t-kind"), () => { $("#sh-kind").innerHTML = kindChipT(d); }); }
     $("#sh-kind").innerHTML = kindChipT(d);
     const ak = autoKind(d), cap = tradeCap(d), kh = $("#t-kind-auto");
-    if (kh) kh.textContent = !nm ? "" : cap != null ? `자동: ${ak} (당시 시총 ${capTxt(cap)})${stockKind(nm) && stockKind(nm) !== ak ? " · 직접 고른 분류가 먼저" : ""}` : "자동 분류: 당시 시총은 저장 후 매시 10분·40분쯤 채워져요";
+    if (kh) kh.textContent = !nm ? "" : cap != null ? `자동: ${ak} (당시 시총 ${capTxt(cap)})${stockKind(nm) && stockKind(nm) !== ak ? " · 직접 고른 분류가 먼저" : ""}` : "자동 분류: 당시 시총을 가져오는 중…";
     const st = $("#sh-title"); st.dataset.tipname = d.name || ""; st.classList.toggle("memo-dot", !!stockMemo(d.name || "")); st.tabIndex = stockMemo(d.name || "") ? 0 : -1;
     const c = calc(d);
     const risk = (d.buy > 0 && d.stop > 0 && d.stop < d.buy && d.qty > 0) ? (d.buy - d.stop) * d.qty : null;
@@ -2286,7 +2338,8 @@ function openTrade(id, opts = {}) {
   };
   $(".sheet-body").addEventListener("input", sync);
   $("#t-type").addEventListener("change", sync);
-  newsShown = ""; usShown = ""; renderAiNote(d); d.newsRefs = d.newsRefs || []; sync(); renderPhotos(); renderRefs(); $("#refAdd").onclick = refAddForm; requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
+  newsShown = ""; usShown = ""; renderAiNote(d);
+  setTimeout(async () => { if (sheet?.draft !== d) return; const changed = (await ensureUs([...US_IDX.map(x => x[0]), ...usSyms(d.name)])) | (d.name && d.date ? await ensureCaps([d]) : 0); if (changed && sheet?.draft === d) softRender(); }, 50); d.newsRefs = d.newsRefs || []; sync(); renderPhotos(); renderRefs(); $("#refAdd").onclick = refAddForm; requestAnimationFrame(() => autosizeAll(document.querySelector(".sheet")));
   sheet.original = JSON.stringify(draft);  // 처음 화면을 채우며 생긴 형식 차이는 변경으로 치지 않음
   L.querySelectorAll("[data-close]").forEach(b => b.onclick = closeTrade);
   $("#sh-save").onclick = saveTrade;
