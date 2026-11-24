@@ -84,7 +84,31 @@ async function candles(code: string) {
   }
   return rows.slice(-7).map(r => { const d = String(r[0]); return [`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}`, r[1], r[2], r[3], r[4], r[5]]; });
 }
-type News = { t: string; title: string; press: string; url: string };
+type News = { t: string; title: string; press: string; url: string; sym?: string };
+const unesc = (x: string) => x.replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+const kst = (ms: number) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 16).replace("T", " ");
+// 어떤 모양의 JSON이든 '제목 + 시각'이 있는 기사를 모음 (해외주식 뉴스용)
+function anyNewsWalk(o: unknown, out: News[]) {
+  if (Array.isArray(o)) { o.forEach(v => anyNewsWalk(v, out)); return; }
+  if (o && typeof o === "object") {
+    const r = o as Record<string, unknown>;
+    const title = [r.title, r.tit, r.headline].find(v => typeof v === "string" && v.trim()) as string | undefined;
+    const raw = [r.datetime, r.dateTime, r.dt, r.createdAt, r.publishedAt, r.pubDate, r.date].find(v => v != null && String(v).trim() !== "");
+    let t = "";
+    if (raw != null) {
+      const d = String(raw).replace(/\D/g, "");
+      if (d.length >= 12) t = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)} ${d.slice(8, 10)}:${d.slice(10, 12)}`;
+      else { const ms = Date.parse(String(raw)); if (isFinite(ms)) t = kst(ms); }
+    }
+    if (title && t) {
+      const oid = r.officeId ?? r.oid, aid = r.articleId ?? r.aid;
+      out.push({ t, title: unesc(title), press: String(r.officeName ?? r.ohnm ?? r.press ?? r.source ?? ""),
+        url: oid && aid ? `https://n.news.naver.com/mnews/article/${oid}/${aid}` : String(r.linkUrl ?? r.url ?? r.mobileUrl ?? "") });
+      return;
+    }
+    Object.values(r).forEach(v => anyNewsWalk(v, out));
+  }
+}
 function newsWalk(o: unknown, out: News[]) {
   if (Array.isArray(o)) { o.forEach(v => newsWalk(v, out)); return; }
   if (o && typeof o === "object") {
@@ -106,6 +130,60 @@ async function news(code: string) {
   const out: News[] = []; newsWalk(JSON.parse(await get(`https://m.stock.naver.com/api/news/stock/${code}?pageSize=20&page=1`)), out);
   return out.sort((a, b) => b.t.localeCompare(a.t)).slice(0, 20);
 }
+// 같은 섹터 종목의 '전 거래일 ~ 매매일' 뉴스 (복기 창 관련 뉴스의 종목 버튼)
+async function newsRange(name: string, code: string, from: string, to: string) {
+  if (!code) { const c = await search(name); code = (c.find(x => x.name === name) ?? c[0])?.code ?? ""; }
+  const data: Record<string, unknown> = { name, code, from, to, fetchedAt: new Date().toISOString(), items: [] as News[], src: "naver-m" };
+  if (!code) { data.status = "nocode"; return data; }
+  const all: News[] = []; let oldest = "9999", reached = false;
+  try {
+    for (let page = 1; page <= 60; page++) {
+      const got: News[] = []; newsWalk(JSON.parse(await get(`https://m.stock.naver.com/api/news/stock/${code}?pageSize=20&page=${page}`)), got);
+      if (!got.length) { reached = true; break; }
+      all.push(...got); oldest = got.reduce((m, x) => x.t.slice(0, 10) < m ? x.t.slice(0, 10) : m, oldest);
+      if (oldest < from) { reached = true; break; }
+    }
+  } catch (_) { /* 깊은 쪽은 네이버가 거부함 */ }
+  const seen = new Set<string>();
+  const inRange = all.filter(x => x.t.slice(0, 10) >= from && x.t.slice(0, 10) <= to)
+    .sort((a, b) => b.t.localeCompare(a.t)).filter(x => { const k = x.title.replace(/[^\p{L}\p{N}]/gu, "").slice(0, 40); return !seen.has(k) && !!seen.add(k); });
+  const core = (x: News) => x.t >= `${from} 15:30` && x.t <= `${to} 15:30`;
+  data.items = [...inRange.filter(core), ...inRange.filter(x => !core(x))].slice(0, 60).sort((a, b) => b.t.localeCompare(a.t));
+  data.status = !all.length ? "empty" : reached ? "ok" : "partial";
+  return data;
+}
+
+// 미국 관련주 뉴스: 네이버 해외주식 뉴스(한국어) → 안 되면 Yahoo(영어)
+async function usNews(sym: string): Promise<News[]> {
+  const codes: string[] = [];
+  try {
+    const c: Record<string, unknown>[] = [];
+    const j = JSON.parse(await get(`https://ac.stock.naver.com/ac?q=${encodeURIComponent(sym)}&target=stock`));
+    (function w(o: unknown) { if (Array.isArray(o)) o.forEach(w); else if (o && typeof o === "object") { const r = o as Record<string, unknown>; if (r.reutersCode) c.push(r); Object.values(r).forEach(w); } })(j);
+    const hit = c.find(r => String(r.code ?? "").toUpperCase() === sym && r.nationCode !== "KOR") ?? c.find(r => String(r.reutersCode).toUpperCase().startsWith(sym + "."));
+    if (hit) codes.push(String(hit.reutersCode));
+  } catch (_) { /* 자동완성 실패 */ }
+  codes.push(`${sym}.O`, `${sym}.N`, `${sym}.K`);
+  for (const rc of [...new Set(codes)]) {
+    for (const u of [`https://api.stock.naver.com/news/worldStock/${rc}?pageSize=20&page=1`, `https://m.stock.naver.com/api/news/worldStock/${rc}?pageSize=20&page=1`]) {
+      try { const got: News[] = []; anyNewsWalk(JSON.parse(await get(u)), got); if (got.length) return got.map(x => ({ ...x, sym })); } catch (_) { /* 다음 */ }
+    }
+  }
+  try {
+    const j = JSON.parse(await get(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(sym)}&quotesCount=0&newsCount=12`, "https://finance.yahoo.com/"));
+    return (j.news ?? []).filter((n: Record<string, unknown>) => n.title && n.providerPublishTime)
+      .map((n: Record<string, unknown>) => ({ t: kst(Number(n.providerPublishTime) * 1000), title: unesc(String(n.title)), press: String(n.publisher ?? "Yahoo"), url: String(n.link ?? ""), sym }));
+  } catch (_) { return []; }
+}
+
+async function saveNews(key: string, data: unknown) {
+  const base = Deno.env.get("SUPABASE_URL"), k = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!base || !k) return;
+  const h: Record<string, string> = { apikey: k, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" };
+  if (k.startsWith("eyJ")) h.Authorization = `Bearer ${k}`;
+  await fetch(`${base}/rest/v1/news?on_conflict=key`, { method: "POST", headers: h, body: JSON.stringify([{ key, data, updated_at: new Date().toISOString() }]) }).catch(() => {});
+}
+
 async function quote(s: { name: string; code?: string }) {
   let code = cleanCode(s.code);
   if (!code) { const c = await search(s.name); code = (c.find(x => x.name === s.name) ?? c[0])?.code ?? ""; }
@@ -140,7 +218,7 @@ Deno.serve(async req => {
   const who = await fetch(`${base}/auth/v1/user`, { headers: { Authorization: auth, apikey } });
   if (!who.ok) return json({ error: "로그인이 만료됐어요. 다시 로그인해 주세요" }, 401);
 
-  let body: { action?: string; q?: string; stocks?: { name: string; code?: string }[] };
+  let body: { action?: string; q?: string; stocks?: { name: string; code?: string }[]; name?: string; code?: string; from?: string; to?: string; syms?: string[]; date?: string };
   try { body = await req.json(); } catch { return json({ error: "잘못된 요청이에요" }, 400); }
 
   if (body.action === "search") return json({ items: await search(String(body.q ?? "")) });
@@ -151,5 +229,19 @@ Deno.serve(async req => {
     await saveLive(out);
     return json({ items: out });
   }
-  return json({ error: "action은 search 또는 quote" }, 400);
+  if (body.action === "news") {
+    const ok = (d?: string) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d);
+    if (!body.name || !ok(body.from) || !ok(body.to)) return json({ error: "name, from, to(YYYY-MM-DD)가 필요해요" }, 400);
+    const data = await newsRange(String(body.name), cleanCode(body.code), body.from!, body.to!);
+    if (data.status !== "nocode") await saveNews(`${body.to}|${body.name}`, data);
+    return json({ data });
+  }
+  if (body.action === "usnews") {
+    const syms = [...new Set((body.syms ?? []).map(x => String(x).toUpperCase().trim()).filter(x => /^\^?[A-Z0-9.\-]{1,12}$/.test(x)))].slice(0, 8);
+    const lists = await Promise.all(syms.map(usNews));
+    const seen = new Set<string>();
+    const items = lists.flat().sort((a, b) => b.t.localeCompare(a.t)).filter(x => !seen.has(x.title) && !!seen.add(x.title));
+    return json({ items: items.slice(0, 60) });
+  }
+  return json({ error: "action은 search, quote, news, usnews 중 하나" }, 400);
 });

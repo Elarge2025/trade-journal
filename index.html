@@ -826,18 +826,35 @@ function usLine(date, name) {
   return { ud, idx: US_IDX.map(([s, l]) => one(s, l)), rel: usSyms(name).map(s => one(s)) };
 }
 let usShown = "";
+const usNewsCache = new Map();
+async function loadUsNews(date, syms) {
+  const el = () => $("#us-news"); if (!el()) return;
+  const k = syms.join(",");
+  el().innerHTML = `<div class="mkt-empty">미국 관련주 뉴스 불러오는 중…</div>`;
+  let c = usNewsCache.get(k);
+  if (!c || Date.now() - c.at > 10 * 60e3) { const r = await callStock({ action: "usnews", syms }); c = { items: r?.items || null, at: Date.now() }; if (r) usNewsCache.set(k, c); }
+  if (!el()) return;
+  if (!c.items) { el().innerHTML = `<div class="mkt-empty">${stockFn.ok === false ? "미국 관련주 뉴스는 stock 함수가 있어야 나와요." : "미국 관련주 뉴스를 가져오지 못했어요."}</div>`; return; }
+  const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+  const recent = date >= today;
+  const ud = usSession(date) || date, lo = new Date(new Date(ud) - 864e5).toISOString().slice(0, 10);
+  const list = [...c.items].sort((a, b) => b.t.localeCompare(a.t)).filter(x => recent || (x.t >= lo && x.t <= date + " 09:00"));
+  el().innerHTML = list.length ? `<div class="us-lab" style="margin-bottom:2px">관련주 뉴스 ${recent ? "· 최근" : `· ${esc(lo.slice(5))} ~ ${esc(date.slice(5))} 아침`}</div>
+      <ul class="news-list">${list.slice(0, 6).map(x => `<li><time>${esc(x.t.slice(5))}</time><a href="${esc(x.url)}" target="_blank" rel="noopener"><span class="stk">${esc(x.sym)}</span>${esc(x.title)}</a><small>${esc(x.press)}</small></li>`).join("")}</ul>`
+    : `<div class="mkt-empty">${recent ? "미국 관련주 뉴스가 없어요." : "이 날짜의 미국 관련주 뉴스는 없어요. 미국 뉴스는 최근 기사 위주로만 가져올 수 있어요."}</div>`;
+}
 function renderUs(date, name, force) {
   const box = $("#sh-us"); if (!box) return;
-  const key = date + "|" + name + "|" + usSyms(name).join(",") + "|" + sectorsOf(name).map(x => x.id).join(","); if (key === usShown && !force) return; usShown = key;
+  const key = date + "|" + name + "|" + usSyms(name).join(","); if (key === usShown && !force) return; usShown = key;
   const L = usLine(date, name), wd = d => "일월화수목금토"[new Date(d + "T00:00:00").getDay()];
   const chip = x => `<span class="us-chip"><small>${esc(x.label)}</small><b class="num ${cls(x.pct)}">${x.pct == null ? "–" : (x.pct > 0 ? "+" : "") + x.pct.toFixed(2) + "%"}</b></span>`;
   const syms = usSyms(name);
   box.innerHTML = `<div class="mkt-head"><b>전날 미국장</b><span>${L ? esc(L.ud) + "(" + wd(L.ud) + ") 마감 · 한국 " + esc(date || "") + " 아침 기준" : "날짜를 넣으면 그 전 미국장 등락이 나와요"}</span></div>
     ${!date ? "" : !L ? `<div class="mkt-empty">미국 시세가 아직 없어요. Supabase에 us_prices 표를 만들면 매시 10분·40분에 채워져요.</div>` : `<div class="us-row"><span class="us-lab">지수</span>${L.idx.map(chip).join("")}</div>`}
-    ${sectorLine(name)}
     ${name ? `<div class="us-row" style="margin-top:8px"><span class="us-lab">관련주</span>${L && syms.length ? L.rel.map(chip).join("") : syms.length ? syms.map(s => chip({ label: s, pct: null })).join("") : `<span class="muted" style="font-size:12.5px">${esc(name)}의 미국 관련주를 정해두면 이 종목 매매마다 나와요</span>`}
       <button type="button" class="btn sm" id="us-edit-btn">${syms.length ? "바꾸기" : "정하기"}</button></div>
       ${L && syms.some(s => !state.us.get(s)) ? `<div class="mkt-empty" style="margin-top:6px">새로 정한 종목 시세는 매시 10분·40분쯤 채워져요 (새로고침 후 보임).</div>` : ""}
+      ${syms.length ? `<div id="us-news" style="margin-top:10px"></div>` : ""}
       <div class="us-edit" id="us-edit" hidden><input class="inp" id="us-in" placeholder="미국 티커를 쉼표로 · 예: TSLA, NVDA, ISRG" value="${esc(syms.join(", "))}" autocomplete="off"><button type="button" class="btn primary" id="us-save">저장</button></div>` : ""}`;
   const eb = $("#us-edit-btn"); if (eb) eb.onclick = () => { const e = $("#us-edit"); e.hidden = !e.hidden; if (!e.hidden) $("#us-in").focus(); };
   const sv = $("#us-save"); if (sv) sv.onclick = async () => {
@@ -848,6 +865,7 @@ function renderUs(date, name, force) {
     try { await api.saveSettings({ ...state.cfg, usMap: map, updatedAt: Date.now() }); state.cfg.usMap = map; toast(list.length ? `${name} 관련주를 저장했어요` : "관련주를 지웠어요"); renderUs(date, name, true); }
     catch (err) { toast(errMsg(err)); sv.disabled = false; }
   };
+  if (syms.length && date) loadUsNews(date, syms);
   const inp = $("#us-in"); if (inp) inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); $("#us-save").click(); } };
 }
 const newsCache = new Map();
@@ -928,32 +946,49 @@ function refAddForm() {
     f.hidden = true; renderRefs(); syncPins();
   };
 }
-async function renderNews(date, name, fx) {
+let newsSel = "";
+function peersOf(name) { return [...new Set(sectorsOf(name).flatMap(s => s.stocks.map(x => x.name)))].filter(n => n !== name); }
+async function renderNews(date, name, fx, force) {
   const box = $("#sh-news"); if (!box) return;
-  const key = (date || "") + "|" + (name || "");
-  if (key === newsShown) return; newsShown = key;
+  const peers = name ? peersOf(name) : [];
+  if (newsSel && newsSel !== name && !peers.includes(newsSel)) newsSel = "";
+  const sel = newsSel || name;
+  const key = (date || "") + "|" + (name || "") + "|" + sel + "|" + peers.join(",");
+  if (key === newsShown && !force) return; newsShown = key;
+  const isPeer = sel !== name;
+  const bar = peers.length ? `<div class="sec-filter" style="margin:2px 0 8px">${[name, ...peers].map(n => `<button type="button" data-nsel="${esc(n)}" aria-pressed="${n === sel}">${esc(n)}${n === name ? " (이 종목)" : ""}</button>`).join("")}</div>` : "";
+  const head = extra => `<div class="mkt-head"><b>관련 뉴스</b><span>${extra}</span></div>${bar}`;
+  const bindBar = () => box.querySelectorAll("[data-nsel]").forEach(b => b.onclick = () => { newsSel = b.dataset.nsel === name ? "" : b.dataset.nsel; renderNews(date, name, fx, true); });
   if (!date || !name) { box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b></div><div class="mkt-empty">날짜와 종목명을 넣으면 전 거래일~그날 뉴스가 나와요.</div>`; return; }
-  box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b><span>${esc(name)} · 불러오는 중…</span></div>`;
-  const v = await getNews(date, name);
+  box.innerHTML = head(`${esc(sel)} · 불러오는 중…`); bindBar();
+  let v = await getNews(date, sel);
+  if (isPeer && (!v || v.error || !v.items)) {
+    const stock = sectorsOf(name).flatMap(s => s.stocks).find(x => x.name === sel);
+    const r = await callStock({ action: "news", name: sel, code: stock?.code || "", from: prevTradingDay(date), to: date });
+    if (r?.data) { v = r.data; if (v.items) newsCache.set(date + "|" + sel, v); }
+    else if (stockFn.ok === false) v = { error: "nofn" };
+  }
   if (newsShown !== key || !$("#sh-news")) return;
   const code = v?.code || "";
   if (!v || v.error || !v.items) {
-    const why = v?.error ? (/news/.test(v.error) && /exist|find|relation/i.test(v.error) ? "Supabase에 news 표를 먼저 만들어 주세요 (setup.sql 맨 아래)." : "뉴스를 불러오지 못했어요.")
-      : "아직 안 가져왔어요. 저장해 두면 매시 10분쯤 자동으로 채워져요. 그 전엔 아래 링크로 보세요.";
-    box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b><span>${esc(name)}</span></div><div class="mkt-empty">${why}</div>${newsLinks(date, name, code)}`; return;
+    const why = v?.error === "nofn" ? "같은 섹터 종목 뉴스는 stock 함수가 있어야 바로 가져와요. 아래 링크로 보세요."
+      : v?.error ? (/news/.test(v.error) && /exist|find|relation/i.test(v.error) ? "Supabase에 news 표를 먼저 만들어 주세요 (setup.sql 맨 아래)." : "뉴스를 불러오지 못했어요.")
+      : isPeer ? "뉴스를 가져오지 못했어요. 아래 링크로 보세요." : "아직 안 가져왔어요. 저장해 두면 매시 10분쯤 자동으로 채워져요. 그 전엔 아래 링크로 보세요.";
+    box.innerHTML = `${head(esc(sel))}<div class="mkt-empty">${why}</div>${newsLinks(date, sel, code)}`; bindBar(); return;
   }
-  if (v.status === "nocode") { box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b><span>${esc(name)}</span></div><div class="mkt-empty">종목명으로 종목코드를 못 찾았어요. 종목명이 영웅문 표기와 같은지 확인해 주세요.</div>${newsLinks(date, name, "")}`; return; }
+  if (v.status === "nocode") { box.innerHTML = `${head(esc(sel))}<div class="mkt-empty">종목명으로 종목코드를 못 찾았어요. 종목명이 영웅문 표기와 같은지 확인해 주세요.</div>${newsLinks(date, sel, "")}`; bindBar(); return; }
   const entry = fx?.entryTime ? date + " " + fx.entryTime.slice(0, 5) : null;
   const tag = x => entry && x.t > entry ? "진입 후" : x.t.slice(0, 10) === date && x.t.slice(11) > "15:30" ? "장 마감 후" : "";
   const items = v.items || [], N = 8;
   let lastDay = "";
-  const li = (x, i) => { const day = x.t.slice(0, 10), head = day !== lastDay ? `<li class="news-day">${day === date ? "매매일" : day === v.from ? "전 거래일" : "휴장일"} · ${esc(day)}</li>` : ""; lastDay = day; const tg = tag(x);
-    return `${head}<li class="${tg ? "after" : ""}" ${i >= N ? "data-more hidden" : ""}><time>${esc(x.t.slice(11))}</time><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a><button type="button" class="pin" data-pin="${i}" aria-pressed="false" title="참고한 뉴스로 복기에 붙이기">참고</button><small>${esc(x.press)}${tg ? " · " + tg : ""}</small></li>`; };
-  box.innerHTML = `<div class="mkt-head"><b>관련 뉴스</b><span>${esc(name)}${code ? " " + esc(code) : ""} · ${esc(v.from.slice(5))} ~ ${esc(date.slice(5))} · ${items.length}건${entry ? " · 흐린 글씨는 진입 뒤에 나온 기사" : ""}</span></div>
+  const li = (x, i) => { const day = x.t.slice(0, 10), hd = day !== lastDay ? `<li class="news-day">${day === date ? "매매일" : day === v.from ? "전 거래일" : "휴장일"} · ${esc(day)}</li>` : ""; lastDay = day; const tg = tag(x);
+    return `${hd}<li class="${tg ? "after" : ""}" ${i >= N ? "data-more hidden" : ""}><time>${esc(x.t.slice(11))}</time><a href="${esc(x.url)}" target="_blank" rel="noopener">${isPeer && !x.title.includes(sel) ? `<span class="stk">${esc(sel)}</span>` : ""}${esc(x.title)}</a><button type="button" class="pin" data-pin="${i}" aria-pressed="false" title="참고한 뉴스로 복기에 붙이기">참고</button><small>${esc(x.press)}${tg ? " · " + tg : ""}</small></li>`; };
+  box.innerHTML = `${head(`${esc(sel)}${code ? " " + esc(code) : ""} · ${esc(v.from.slice(5))} ~ ${esc(date.slice(5))} · ${items.length}건${entry ? " · 흐린 글씨는 진입 뒤에 나온 기사" : ""}`)}
     ${items.length ? `<ul class="news-list">${items.map(li).join("")}</ul>${items.length > N ? `<button class="btn sm" type="button" id="news-more" style="margin-top:6px">${items.length - N}건 더 보기</button>` : ""}` : `<div class="mkt-empty">${v.status === "empty" ? "네이버 증권 종목 뉴스 목록에 이 종목 기사가 없어요. 신규 상장주나 새 형식 코드(영문 섞인 코드)는 비어 있을 수 있어요. 아래 검색 링크로 보세요." : v.status === "partial" ? "네이버 종목 뉴스 목록이 이 날짜까지 거슬러 올라가지 않아요. 아래 검색 링크로 보세요." : "이 기간에 네이버 증권에 올라온 종목 뉴스가 없어요."}</div>`}
     ${items.length && v.status === "partial" ? `<div class="mkt-empty" style="margin-top:6px">기사가 많은 종목이라 네이버 목록에서 일부만 가져왔어요. 빠진 건 아래 검색 링크로 보세요.</div>` : ""}
-    ${newsLinks(date, name, code, v.from)}`;
-  box.querySelectorAll("[data-pin]").forEach(b => b.onclick = () => togglePin({ ...items[+b.dataset.pin], after: !!tag(items[+b.dataset.pin]) }));
+    ${newsLinks(date, sel, code, v.from)}`;
+  bindBar();
+  box.querySelectorAll("[data-pin]").forEach(b => b.onclick = () => { const x = items[+b.dataset.pin]; togglePin({ ...x, title: isPeer && !x.title.includes(sel) ? `[${sel}] ${x.title}` : x.title, after: !!tag(x) }); });
   syncPins();
   const mb = $("#news-more"); if (mb) mb.onclick = () => { box.querySelectorAll("[data-more]").forEach(e => e.hidden = false); box.querySelectorAll(".news-day").forEach(e => e.hidden = false); mb.remove(); };
   box.querySelectorAll(".news-list li[data-more]").forEach(e => { const p = e.previousElementSibling; if (p && p.classList.contains("news-day")) p.hidden = true; });
@@ -1625,10 +1660,6 @@ function sectorForm(sc) {
       if (isNew && stocks.length && stockFn.ok && await refreshQuotes(stocks, true)) renderSectors(); }
     catch (err) { toast(/sectors/.test(errMsg(err)) ? "Supabase에 sectors 표를 먼저 만들어 주세요" : errMsg(err)); }
   };
-}
-function sectorLine(name) {
-  const secs = name ? sectorsOf(name) : []; if (!secs.length) return "";
-  return `<div class="us-row" style="margin-top:8px"><span class="us-lab">섹터</span>${secs.map(s => `<a class="btn sm" href="#sectors" data-gosec="${esc(s.id)}">${esc(s.name)}</a><span class="muted" style="font-size:12.5px">${s.stocks.filter(x => x.name !== name).slice(0, 6).map(x => esc(x.name)).join(", ")}${s.stocks.length > 7 ? " 외" : ""}</span>`).join("")}</div>`;
 }
 document.addEventListener("click", e => { const g = e.target.closest("[data-gosec]"); if (!g) return; setSel(g.dataset.gosec); const c = document.querySelector(".sheet-head [data-close]"); if (c) c.click(); });
 
