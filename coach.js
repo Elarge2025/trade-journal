@@ -223,12 +223,14 @@
     },
 
     function smallCaps(x) {
-      const g = x.done.filter(t => hasMis(t, "비주도주", "근거 없는", "잡주"));
+      const small = x.done.filter(t => t.kind === "소형주");
+      const g = x.done.filter(t => t.kind === "소형주" || hasMis(t, "비주도주", "근거 없는", "잡주"));
       if (g.length < 3) return null;
       const s = group(g);
-      if (s.pnl >= 0) return null;
-      return { tone: "warn", w: 6, title: "주도주가 아닌 종목, 근거 없는 진입이 보여요",
-        mine: `'비주도주·근거 없는 진입' ${g.length}건: 승률 ${pct(s.wr)}, 순손익 ${won(s.pnl)}.`,
+      if (s.pnl >= 0 && small.length < 3) return null;
+      const ss = group(small);
+      return { tone: s.pnl >= 0 ? "info" : "warn", w: 6, title: small.length >= 3 ? (s.pnl >= 0 ? "소형주 매매가 쌓이고 있어요 (지금은 수익이어도)" : "소형주 매매에서 손실이 나고 있어요") : "주도주가 아닌 종목, 근거 없는 진입이 보여요",
+        mine: (small.length ? `소형주로 분류한 종목 매매 ${small.length}건: 승률 ${pct(ss.wr)}, 순손익 ${won(ss.pnl)}. ` : "") + `소형주·비주도주·근거 없는 진입 합계 ${g.length}건: 승률 ${pct(s.wr)}, 순손익 ${won(s.pnl)}.`,
         principle: "시가총액이 작고 대금이 적은 종목은 기술적 분석의 신뢰도가 없어요. 아무리 소액 연습이라도 1분당 거래대금이 40억 원 전후 이상 꾸준히 터지는 주도주로만 훈련해야 매매 습관이 제대로 잡힙니다. 매매할 주도주가 없을 때는 수익을 낼 수 없는 시장임을 인정하고 관망해 주세요.",
         src: [SRC.qa3, SRC.qa6] };
     },
