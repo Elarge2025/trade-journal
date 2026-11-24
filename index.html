@@ -255,6 +255,21 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .sec-search .inp{flex:1 1 240px;max-width:360px}
 .sec-hits{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
 .sec-hit{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.plan-nav{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.plan-nav .grow{flex:1}.plan-state{font-size:12.5px}
+.plan-cols{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:999px){.plan-cols{grid-template-columns:1fr}}
+.plan-col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.plan-sec{display:flex;flex-direction:column;gap:10px}.plan-sec h3{margin:0;font-size:15px}
+.fgrid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media (max-width:560px){.fgrid2{grid-template-columns:1fr}}
+.plan-ref{display:flex;flex-direction:column;gap:6px;font-size:13px;padding:12px 14px}.plan-ref>div{display:flex;gap:12px;flex-wrap:wrap;align-items:baseline}.plan-ref small{color:var(--muted);min-width:118px}
+.plan-stock{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;background:var(--bg)}
+.plan-stock-h{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.plan-stock-h .grow{flex:1}.plan-stock-h b{font-size:15px}
+.plan-stock-h .x{border:0;background:none;color:var(--muted);cursor:pointer;font-size:12px;padding:2px 4px}
+.plan-stock-g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.plan-stock-g .wide{grid-column:1/-1}@media (max-width:560px){.plan-stock-g{grid-template-columns:1fr}}
+.plan-stock .memo{font-size:12.5px;color:var(--muted);background:var(--surface-2);border-radius:8px;padding:6px 8px;cursor:pointer;white-space:pre-wrap}
+.plan-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.plan-kpis>div{background:var(--surface-2);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column}.plan-kpis small{color:var(--muted);font-size:11.5px}.plan-kpis b{font-size:15px}
+@media (max-width:560px){.plan-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.plan-dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:8px 0 0;font-size:13px}.plan-dl dt{color:var(--muted);font-weight:600}.plan-dl dd{margin:0;white-space:pre-wrap}
 .strat-form{max-height:calc(100dvh - 32px);overflow-y:auto}
 .strat-sum{margin:4px 0 0;color:var(--muted)}
 .strat-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:14px}
@@ -467,7 +482,7 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
   <div class="brand"><b>매매 복기노트</b><span id="countLabel">기록을 불러오는 중</span></div>
   <nav class="tabs" aria-label="화면">
     <a href="#log" data-view="log">매매기록</a>
-    <a href="#strategy" data-view="strategy">매매전략</a>
+    <a href="#plan" data-view="plan">매매 시나리오</a>
     <a href="#stats" data-view="stats">통계</a>
     <a href="#notes" data-view="notes">오답노트</a>
     <a href="#sectors" data-view="sectors">섹터</a>
@@ -505,8 +520,8 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
     <div id="listWrap"></div>
   </section>
 
-  <!-- 매매전략 -->
-  <section id="view-strategy" data-viewpane="strategy" hidden></section>
+  <!-- 매매 시나리오 (+ 전략 모음) -->
+  <section id="view-plan" data-viewpane="plan" hidden></section>
 
   <!-- 통계 -->
   <section id="view-stats" data-viewpane="stats" hidden></section>
@@ -549,7 +564,7 @@ const PHOTO_PROMPTS = [
   {title:"매도 · 기타", q:"왜 여기서 팔았나 · 다시 보면 당시 가능했던 더 나은 판단은?"}
 ];
 
-const state = { caps: new Map(), sectors: [], us: new Map(), fills: [], fx: new Map(), coachReports: [], coachPeriod: (() => { try { return localStorage.getItem("tj-coach-period") || "90"; } catch { return "90"; } })(), market: new Map(), trades: [], weeks: [], cfg: {...DEFAULTS}, loaded: false, readOnly: false };
+const state = { caps: new Map(), plans: [], sectors: [], us: new Map(), fills: [], fx: new Map(), coachReports: [], coachPeriod: (() => { try { return localStorage.getItem("tj-coach-period") || "90"; } catch { return "90"; } })(), market: new Map(), trades: [], weeks: [], cfg: {...DEFAULTS}, loaded: false, readOnly: false };
 let sb = null, session = null;
 const urlCache = new Map();
 const api = {
@@ -575,6 +590,7 @@ const api = {
     state.weeks = w.data.map(r => ({ id: r.id, ...r.doc }));
     try { const cr = await sb.from("coach_reports").select("id, created_at, model, period, text").order("created_at", { ascending: false }).limit(12); if (!cr.error) state.coachReports = cr.data; } catch {}
     try { const m = await sb.from("market_days").select("date, data").order("date", { ascending: false }).limit(2000); if (!m.error) state.market = new Map(m.data.map(r => [r.date, r.data])); } catch {}
+    try { const pl = await all("plans", "id, doc"); if (!pl.error) { state.plans = pl.data.map(r => ({ ...r.doc, id: r.id })); state.plansMissing = false; } else state.plansMissing = /exist|find|relation/i.test(pl.error.message || ""); } catch {}
     try { const sc = await all("sectors", "id, doc"); if (!sc.error) state.sectors = sc.data.map(r => ({ id: r.id, ...r.doc, stocks: r.doc.stocks || [] })); else state.sectorsMissing = /exist|find|relation/i.test(sc.error.message || ""); } catch {}
     try { const cp = await sb.from("stock_caps").select("name, data"); state.caps = new Map(cp.error ? [] : cp.data.map(r => [r.name, r.data])); } catch { state.caps = new Map(); }
     try { const u = await sb.from("us_prices").select("sym, data"); if (!u.error) state.us = new Map(u.data.map(r => [r.sym, r.data])); } catch {}
@@ -584,6 +600,8 @@ const api = {
   async deleteTrade(id) { const { error } = await sb.from("trades").delete().eq("id", id); if (error) throw error; },
   async saveWeek(id, doc) { const { error } = await sb.from("weeks").upsert({ id, user_id: api.uid(), doc, updated_at: new Date().toISOString() }); if (error) throw error; },
   async saveSector(id, doc) { const { error } = await sb.from("sectors").upsert({ id, user_id: api.uid(), doc, updated_at: new Date().toISOString() }); if (error) throw error; },
+  async savePlan(id, doc) { const { error } = await sb.from("plans").upsert({ id, user_id: api.uid(), doc, updated_at: new Date().toISOString() }); if (error) throw error; },
+  async deletePlan(id) { const { error } = await sb.from("plans").delete().eq("id", id); if (error) throw error; },
   async deleteSector(id) { const { error } = await sb.from("sectors").delete().eq("id", id); if (error) throw error; },
   async deleteWeek(id) { const { error } = await sb.from("weeks").delete().eq("id", id); if (error) throw error; },
   async saveSettings(doc) { const { error } = await sb.from("settings").upsert({ user_id: api.uid(), doc, updated_at: new Date().toISOString() }); if (error) throw error; },
@@ -793,7 +811,7 @@ function setStatus(msg, warn) {
 }
 
 /* ---------- 라우팅 ---------- */
-const VIEWS = ["log","strategy","stats","notes","sectors","setup"];
+const VIEWS = ["log","plan","stats","notes","sectors","setup"];
 function route() {
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
   document.querySelectorAll("[data-viewpane]").forEach(p => p.hidden = p.dataset.viewpane !== v);
@@ -2055,7 +2073,7 @@ function renderStrategy() {
     </div>`;
   }
   box.innerHTML = `
-    <div class="section-head"><h2 class="grow">매매전략</h2><button class="btn" type="button" id="st-new">＋ 전략 만들기</button></div>
+    <div class="section-head"><p class="muted grow" style="margin:0;font-size:13px">매매법을 전략 단위로 정리해 두는 곳이에요. 매매유형을 연결하면 전략별 성과가 모여요.</p><button class="btn" type="button" id="st-new">＋ 전략 만들기</button></div>
     ${list.length ? `<div class="sec-tabs" role="tablist">${list.map(s => `<button type="button" role="tab" data-st="${esc(s.id)}" aria-pressed="${s.id === stratUi.sel}" class="${s.status === "보류" ? "off" : ""}">${esc(s.name)}<small>${esc(s.status || "사용 중")}</small></button>`).join("")}</div>` : ""}
     ${cur ? detail : `<div class="card"><p style="margin:0 0 8px"><b>내 매매법을 전략 단위로 정리하는 곳이에요.</b></p>
       <p class="muted" style="margin:0">전략마다 시장 조건 · 종목 선정 · 진입 · 익절 · 손절 · 비중 · 하지 말 것 · 매수 전 체크리스트를 적어 두고, 매매유형(돌파, 눌림목, 종가베팅 …)을 연결하면 그 유형 매매의 승률·손익이 전략별로 모여요. 매매 기록 창에서는 그 전략의 체크리스트를 체크할 수 있고, 다 지킨 매매와 빠뜨린 매매의 성과를 비교해 줘요.</p></div>`}`;
@@ -2085,10 +2103,10 @@ async function stratFiles(files) {
   if (!added.length) { if (st) st.hidden = true; return; }
   const nl = strategies().map(s => s.id === id ? { ...s, photos: [...(s.photos || []), ...added], updatedAt: Date.now() } : s);
   try { await saveStrategies(nl, `사진 ${added.length}장을 붙였어요`); } catch (err) { toast(errMsg(err)); }
-  if (location.hash === "#strategy") renderStrategy();
+  if (location.hash === "#plan" && planUi.sub === "strategy") renderStrategy();
 }
 document.addEventListener("paste", e => {
-  if (sheet || !session || location.hash !== "#strategy" || !stratUi.sel || document.querySelector(".modal-wrap")) return;
+  if (sheet || !session || location.hash !== "#plan" || planUi.sub !== "strategy" || !stratUi.sel || document.querySelector(".modal-wrap")) return;
   const files = [...(e.clipboardData?.items || [])].filter(i => i.kind === "file" && i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean);
   if (files.length) { e.preventDefault(); stratFiles(files); }
 });
@@ -2145,15 +2163,181 @@ function renderTradeStrat(d) {
   d.checks = d.checks || [];
   box.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:12px;color:var(--muted);font-weight:600">전략</span>
       <select class="inp" id="t-strat-sel" style="width:auto;min-width:180px"><option value="">${auto ? `자동: ${esc(auto.name)} (유형 '${esc(d.type)}')` : "자동 (연결된 전략 없음)"}</option>${list.map(x => `<option value="${esc(x.id)}" ${d.strategy === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}<option value="none" ${d.strategy === "none" ? "selected" : ""}>전략 없이 한 매매</option></select>
-      ${s ? `<a href="#strategy" data-gost="${esc(s.id)}" style="font-size:12.5px">전략 보기</a>` : ""}${s?.summary ? `<span class="muted" style="font-size:12.5px;flex-basis:100%">${esc(s.summary)}</span>` : ""}</div>
+      ${s ? `<a href="#plan" data-gost="${esc(s.id)}" style="font-size:12.5px">전략 보기</a>` : ""}${s?.summary ? `<span class="muted" style="font-size:12.5px;flex-basis:100%">${esc(s.summary)}</span>` : ""}</div>
     ${s && (s.checklist || []).length ? `<div class="ck-box">${s.checklist.map((x, i) => `<label><input type="checkbox" data-ck="${i}" ${d.checks.includes(x) ? "checked" : ""}> ${esc(x)}</label>`).join("")}<small class="muted" id="t-ck-n"></small></div>`
       : s ? `<span class="muted" style="font-size:12.5px">이 전략엔 체크리스트가 없어요.</span>` : ""}`;
   const n = () => { const el = $("#t-ck-n"); if (el && s) el.textContent = `${s.checklist.filter(x => d.checks.includes(x)).length}/${s.checklist.length} 지킴`; };
   n();
   $("#t-strat-sel").onchange = e => { d.strategy = e.target.value || undefined; if (!d.strategy) delete d.strategy; renderTradeStrat(d); };
   box.querySelectorAll("[data-ck]").forEach(c => c.onchange = () => { const x = s.checklist[+c.dataset.ck]; d.checks = c.checked ? [...new Set([...d.checks, x])] : d.checks.filter(y => y !== x); n(); });
-  const g = box.querySelector("[data-gost]"); if (g) g.onclick = () => { stratUi.sel = g.dataset.gost; const c = document.querySelector(".sheet-head [data-close]"); if (c) c.click(); };
+  const g = box.querySelector("[data-gost]"); if (g) g.onclick = () => { stratUi.sel = g.dataset.gost; planUi.sub = "strategy"; const c = document.querySelector(".sheet-head [data-close]"); if (c) c.click(); };
 }
+
+/* ---------- 매매 시나리오 (그날그날 장 전 계획 → 장 후 점검, plans 표) ---------- */
+const planUi = { sub: "day", date: "", draft: null, timer: null, saving: false };
+const PLAN_STOCK_FIELDS = [["why", "고른 이유 · 재료", "재료, 섹터, 주도주인지, 거래대금"], ["entry", "진입 시나리오", "어디서 산다. 예: 시초 갭 3% 이내 + 전고점 돌파 후 첫 눌림"], ["stop", "손절", "어디서 틀렸다고 본다. 예: 9,800 이탈"], ["target", "익절", "어디서 판다. 예: 절반 +4%, 나머지 분봉 추세 이탈"], ["size", "비중", "얼마나. 예: 1/3씩 최대 900만"], ["no", "이러면 안 한다", "시나리오가 깨지는 조건. 예: 갭 10% 이상, 거래대금 300억 미만"]];
+const planOf = date => state.plans.find(p => p.date === date) || null;
+const kstToday = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+function nextWeekday(date) { const d = new Date(date + "T00:00:00"); do d.setDate(d.getDate() + 1); while (d.getDay() === 0 || d.getDay() === 6); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function defaultPlanDate() { const kst = new Date(Date.now() + 9 * 3600e3), t = kstToday(), wd = kst.getUTCDay(); return (wd === 0 || wd === 6 || kst.getUTCHours() >= 16) ? nextWeekday(t) : t; }
+function blankPlan(date) { return { id: crypto.randomUUID(), date, market: "", good: "", bad: "", rules: "", maxLoss: null, maxTrades: null, stocks: [], photos: [], score: "", after: "", createdAt: Date.now(), updatedAt: Date.now() }; }
+function renderPlanView(soft) {
+  const box = $("#view-plan"); if (!box) return;
+  if (!box.dataset.built) {
+    box.dataset.built = "1";
+    box.innerHTML = `<div class="section-head"><h2 class="grow">매매 시나리오</h2><div class="seg" id="plan-sub"><button type="button" data-ps="day">그날 시나리오</button><button type="button" data-ps="strategy">전략 모음</button></div></div>
+      <div id="plan-day"></div><div id="view-strategy" hidden></div>`;
+    box.querySelector("#plan-sub").onclick = e => { const b = e.target.closest("[data-ps]"); if (!b) return; flushPlan(); planUi.sub = b.dataset.ps; renderPlanView(); };
+  }
+  box.querySelectorAll("[data-ps]").forEach(b => b.setAttribute("aria-pressed", b.dataset.ps === planUi.sub));
+  $("#plan-day").hidden = planUi.sub !== "day"; $("#view-strategy").hidden = planUi.sub !== "strategy";
+  if (planUi.sub === "strategy") renderStrategy(); else renderPlanDay(soft);
+}
+function planTrades(date) { return enriched(true).filter(t => t.date === date); }
+function renderPlanDay(soft) {
+  const box = $("#plan-day"); if (!box) return;
+  if (soft && box.contains(document.activeElement) && document.activeElement.matches("input,textarea")) return;
+  if (!planUi.date) planUi.date = defaultPlanDate();
+  const date = planUi.date, saved = planOf(date);
+  if (!planUi.draft || planUi.draft.date !== date) planUi.draft = saved ? JSON.parse(JSON.stringify(saved)) : blankPlan(date);
+  const p = planUi.draft, wd = "일월화수목금토"[new Date(date + "T00:00:00").getDay()];
+  const L = usLine(date, ""), prev = prevTradingDay(date), pm = state.market.get(prev);
+  const recent = [...state.plans].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12);
+  const tr = planTrades(date), real = tr.filter(t => !t.missed), done = real.filter(t => t.c);
+  const pnl = done.reduce((a, t) => a + t.c.pnl, 0), names = p.stocks.map(s => s.name);
+  const off = real.filter(t => !names.includes(t.name));
+  const usTxt = L ? L.idx.map(x => `<span>${esc(x.label)} <b class="num ${cls(x.pct)}">${x.pct == null ? "–" : spct(x.pct / 100)}</b></span>`).join("") : `<span class="muted">미국 시세를 불러오는 중이거나 없어요</span>`;
+  const mk = k => pm?.[k] ? `<span>${k === "kospi" ? "코스피" : "코스닥"} <b class="num ${cls(pm[k].chgPct)}">${pm[k].chgPct == null ? "–" : spct(pm[k].chgPct / 100)}</b></span>` : "";
+  box.innerHTML = `
+    ${state.plansMissing ? `<div class="notice warn">Supabase에 plans 표가 아직 없어서 시나리오를 저장할 수 없어요. setup.sql 맨 아래 '매매 시나리오' 부분을 SQL Editor에서 실행해 주세요.</div>` : ""}
+    <div class="plan-nav">
+      <button class="btn sm" type="button" data-pd="-1" aria-label="이전 날">◀</button>
+      <input class="inp" type="date" id="plan-date" value="${esc(date)}" style="width:auto">
+      <b>${esc(wd)}요일</b>
+      <button class="btn sm" type="button" data-pd="1" aria-label="다음 날">▶</button>
+      <button class="btn sm" type="button" id="plan-today">${defaultPlanDate() === kstToday() ? "오늘" : "다음 장"}</button>
+      <span class="grow"></span><span class="muted plan-state" id="plan-state">${saved ? "저장됨" : "아직 안 씀"}</span>
+    </div>
+    ${recent.length ? `<div class="sec-tabs">${recent.map(x => `<button type="button" data-pgo="${esc(x.date)}" aria-pressed="${x.date === date}">${esc(x.date.slice(5))}<small>${x.score ? esc(x.score) : (x.stocks || []).length + "종목"}</small></button>`).join("")}</div>` : ""}
+    <div class="plan-cols">
+     <div class="plan-col">
+      <p class="sh-col-h">장 전 · 시나리오</p>
+      <div class="card plan-ref"><div><small>전날 미국장 ${L ? `(${esc(L.ud.slice(5))})` : ""}</small>${usTxt}</div><div><small>전날 국장 (${esc(prev.slice(5))})</small>${mk("kospi")}${mk("kosdaq")}${pm ? "" : `<span class="muted">데이터 없음</span>`}</div></div>
+      <section class="card plan-sec"><h3>시장 시나리오</h3>
+        <label class="f"><span>오늘 시장 예상</span><textarea class="inp" data-pf="market" rows="2" placeholder="전날 미국장·뉴스를 보고. 예: 반도체 강세 이어질 듯, 로봇 섹터 재료 대기">${esc(p.market)}</textarea></label>
+        <div class="fgrid2"><label class="f"><span>좋게 출발하면</span><textarea class="inp" data-pf="good" rows="2" placeholder="예: 주도 섹터 대장 첫 눌림만 본다">${esc(p.good)}</textarea></label>
+        <label class="f"><span>나쁘게 출발하면</span><textarea class="inp" data-pf="bad" rows="2" placeholder="예: 10시 전 매매 금지, 종가베팅만 본다">${esc(p.bad)}</textarea></label></div>
+      </section>
+      <section class="card plan-sec"><div class="section-head" style="margin:0"><h3 class="grow" style="margin:0">관심 종목 시나리오</h3></div>
+        <div id="plan-stocks">${p.stocks.map((s, i) => planStockCard(s, i, tr)).join("") || `<p class="muted" style="margin:0">오늘 볼 종목을 넣고 종목마다 어떻게 매매할지 적어요.</p>`}</div>
+        <div class="sec-add"><input class="inp" id="plan-add-in" placeholder="종목명 넣기 · 쉼표로 여러 개" list="plan-names" autocomplete="off"><button class="btn primary" type="button" id="plan-add">넣기</button></div>
+        <datalist id="plan-names">${[...new Set([...tradedNames(), ...state.sectors.flatMap(s => s.stocks.map(x => x.name))])].map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+      </section>
+      <section class="card plan-sec"><h3>오늘 지킬 것</h3>
+        <div class="fgrid2"><label class="f"><span>하루 최대 손실 (원)</span><input class="inp num" data-pf="maxLoss" inputmode="numeric" value="${p.maxLoss != null ? Number(p.maxLoss).toLocaleString("ko-KR") : ""}" placeholder="예: 300,000"></label>
+        <label class="f"><span>최대 매매 횟수</span><input class="inp num" data-pf="maxTrades" inputmode="numeric" value="${p.maxTrades ?? ""}" placeholder="예: 3"></label></div>
+        <label class="f"><span>원칙 · 다짐</span><textarea class="inp" data-pf="rules" rows="2" placeholder="예: 시나리오에 없는 종목은 안 산다, 손절 두 번이면 그날 끝">${esc(p.rules)}</textarea></label>
+      </section>
+      <section class="card plan-sec"><div class="section-head" style="margin:0 0 8px"><h3 class="grow" style="margin:0">차트</h3><span class="muted" style="font-size:12px">이 화면에서 Ctrl+V · 끌어다 놓기</span><button class="btn sm" type="button" id="plan-pick">사진 고르기</button><input type="file" id="plan-file" accept="image/*" multiple hidden></div>
+        <div class="strat-photos" id="plan-drop">${p.photos.length ? p.photos.map((ph, i) => `<figure><img data-path="${esc(ph.asset)}" alt="${esc(ph.note || "차트")}" data-pzoom="${i}"><figcaption><input class="inp" data-phnote="${i}" value="${esc(ph.note || "")}" placeholder="이 차트에서 볼 자리"><button type="button" class="btn sm danger" data-phrm="${i}">빼기</button></figcaption></figure>`).join("") : `<p class="muted" style="margin:0">관심 종목 일봉·분봉, 그려 둔 지지·저항 자리를 붙여 두세요.</p>`}<div class="uploading" id="plan-up" hidden></div></div>
+      </section>
+     </div>
+     <div class="plan-col">
+      <p class="sh-col-h">장 후 · 점검</p>
+      <section class="card plan-sec"><h3>실제 매매 <span class="muted" style="font-weight:500;font-size:12.5px">매매 기록의 날짜(매도일) 기준</span></h3>
+        ${real.length ? `<div class="plan-kpis"><div><small>매매</small><b class="num ${p.maxTrades && real.length > p.maxTrades ? "warn-t" : ""}">${real.length}건${p.maxTrades ? ` / ${p.maxTrades}` : ""}</b></div>
+            <div><small>손익</small><b class="num ${cls(pnl)}">${done.length ? signed(pnl) : "–"}</b></div>
+            <div><small>최대 손실</small><b class="num ${p.maxLoss && pnl < -p.maxLoss ? "warn-t" : ""}">${p.maxLoss ? (pnl < -p.maxLoss ? "넘음" : "지킴") : "–"}</b></div>
+            <div><small>시나리오 밖</small><b class="num ${off.length ? "warn-t" : ""}">${p.stocks.length ? off.length + "건" : "–"}</b></div></div>
+          <div class="tscroll" style="margin-top:10px"><table class="t"><thead><tr><th style="text-align:left">종목</th><th style="text-align:left">유형</th><th>손익</th><th style="text-align:left">시나리오</th></tr></thead><tbody>
+          ${real.map(t => `<tr data-open="${esc(t.id)}" style="cursor:pointer"><td style="text-align:left"><b>${esc(t.name)}</b></td><td style="text-align:left">${esc(t.type || "")}</td><td class="num ${cls(t.c?.pnl)}">${t.c ? signed(t.c.pnl) : "–"}</td><td style="text-align:left">${names.includes(t.name) ? `<span class="chip type">있음</span>` : p.stocks.length ? `<span class="chip mis">시나리오 밖</span>` : "–"}</td></tr>`).join("")}</tbody></table></div>`
+          : `<p class="muted" style="margin:0">${date > kstToday() ? "장이 끝나고 매매를 기록하면 여기서 시나리오와 비교돼요." : "이 날 기록한 매매가 없어요."}</p>`}
+        ${tr.some(t => t.missed) ? `<p class="muted" style="font-size:12.5px;margin:8px 0 0">놓친 종목: ${tr.filter(t => t.missed).map(t => `<a href="#plan" data-open="${esc(t.id)}">${esc(t.name)}</a>`).join(", ")}</p>` : ""}
+      </section>
+      <section class="card plan-sec"><h3>시나리오대로 했나</h3>
+        <div class="seg" id="plan-score">${[["O", "그대로 했음"], ["△", "일부만"], ["X", "못 지켰음"]].map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${p.score === v}">${v} ${l}</button>`).join("")}</div>
+        <label class="f"><span>장 후 메모</span><textarea class="inp" data-pf="after" rows="4" placeholder="시나리오와 실제 장이 어떻게 달랐나, 내가 어디서 벗어났나, 내일 시나리오에 넣을 것">${esc(p.after)}</textarea></label>
+      </section>
+      ${saved ? `<div style="text-align:right"><button class="btn sm danger" type="button" id="plan-del">이 날 시나리오 지우기</button></div>` : ""}
+     </div>
+    </div>`;
+  fillImages(box); autosizeAll(box);
+  // 이벤트
+  const go = d => { flushPlan(); planUi.date = d; planUi.draft = null; renderPlanDay(); };
+  box.querySelectorAll("[data-pd]").forEach(b => b.onclick = () => { const d = new Date(date + "T00:00:00"); do d.setDate(d.getDate() + +b.dataset.pd); while (d.getDay() === 0 || d.getDay() === 6); go(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0")); });
+  $("#plan-date").onchange = e => e.target.value && go(e.target.value);
+  $("#plan-today").onclick = () => go(defaultPlanDate());
+  box.querySelectorAll("[data-pgo]").forEach(b => b.onclick = () => go(b.dataset.pgo));
+  box.querySelectorAll("[data-pf]").forEach(el => el.oninput = () => {
+    const k = el.dataset.pf; if (k === "maxLoss" || k === "maxTrades") { const n = parseNum(el.value); p[k] = n > 0 ? n : null; } else p[k] = el.value;
+    autosize(el); queuePlan();
+  });
+  box.querySelectorAll("[data-psf]").forEach(el => el.oninput = () => { const [i, k] = el.dataset.psf.split("|"); p.stocks[+i][k] = el.value; autosize(el); queuePlan(); });
+  box.querySelectorAll("[data-psrm]").forEach(b => b.onclick = () => { p.stocks.splice(+b.dataset.psrm, 1); queuePlan(true); renderPlanDay(); });
+  box.querySelectorAll("[data-psup]").forEach(b => b.onclick = () => { const i = +b.dataset.psup; if (i > 0) { [p.stocks[i - 1], p.stocks[i]] = [p.stocks[i], p.stocks[i - 1]]; queuePlan(true); renderPlanDay(); } });
+  $("#plan-score").onclick = e => { const b = e.target.closest("[data-v]"); if (!b) return; p.score = p.score === b.dataset.v ? "" : b.dataset.v; box.querySelectorAll("#plan-score button").forEach(x => x.setAttribute("aria-pressed", x.dataset.v === p.score)); queuePlan(true); };
+  const ai = $("#plan-add-in"), add = () => { const ns = ai.value.split(/[,\n]+/).map(x => x.trim()).filter(Boolean).filter(n => !p.stocks.some(s => s.name === n)); if (!ns.length) { toast(ai.value.trim() ? "이미 들어 있는 종목이에요" : "종목명을 적어 주세요"); return; } ns.forEach(n => p.stocks.push({ name: n, why: "", entry: "", stop: "", target: "", size: "", no: "" })); queuePlan(true); renderPlanDay(); setTimeout(() => { const el = document.querySelector(`[data-psf="${p.stocks.length - ns.length}|why"]`); el && el.focus(); }, 30); };
+  $("#plan-add").onclick = add; ai.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); add(); } };
+  box.querySelectorAll("[data-phrm]").forEach(b => b.onclick = async () => { const ph = p.photos.splice(+b.dataset.phrm, 1)[0]; await flushPlan(true); try { await api.removeImages([ph.asset]); } catch {} renderPlanDay(); });
+  box.querySelectorAll("[data-phnote]").forEach(el => el.oninput = () => { p.photos[+el.dataset.phnote].note = el.value; queuePlan(); });
+  box.querySelectorAll("[data-pzoom]").forEach(img => img.onclick = () => lightbox(p.photos.map(ph => ({ asset: ph.asset, title: date + " 시나리오", note: ph.note || "", marks: [] })), +img.dataset.pzoom));
+  $("#plan-pick").onclick = () => $("#plan-file").click();
+  $("#plan-file").onchange = e => { planFiles([...e.target.files]); e.target.value = ""; };
+  const dr = $("#plan-drop"); dr.ondragover = e => { e.preventDefault(); dr.classList.add("over"); }; dr.ondragleave = () => dr.classList.remove("over");
+  dr.ondrop = e => { e.preventDefault(); dr.classList.remove("over"); planFiles([...e.dataTransfer.files].filter(f => f.type.startsWith("image/"))); };
+  box.querySelectorAll("[data-memo]").forEach(el => { const open = () => editStockMemo(el, el.dataset.memo, () => { flushPlan(); renderPlanDay(); }); el.onclick = open; });
+  const del = $("#plan-del"); if (del) del.onclick = async () => { if (!await confirmBox("시나리오 지우기", `${date} 시나리오를 지울까요?`)) return; clearTimeout(planUi.timer);
+    try { await api.deletePlan(saved.id); state.plans = state.plans.filter(x => x.id !== saved.id); try { await api.removeImages((saved.photos || []).map(x => x.asset)); } catch {} planUi.draft = null; toast("지웠어요"); renderPlanDay(); } catch (err) { toast(errMsg(err)); } };
+}
+function planStockCard(s, i, tr) {
+  const mine = tr.filter(t => t.name === s.name && !t.missed), m = stockMemo(s.name), L = liveCache.get(s.name)?.data;
+  return `<div class="plan-stock"><div class="plan-stock-h"><b>${esc(s.name)}</b>${kindChip(s.name)}${sectorsOf(s.name).map(x => `<span class="chip">${esc(x.name)}</span>`).join("")}
+      ${mine.length ? mine.map(t => `<span class="chip ${t.c ? (t.c.pnl > 0 ? "type" : "mis") : ""}" data-open="${esc(t.id)}" style="cursor:pointer">매매 ${t.c ? signed(t.c.pnl) : "기록"}</span>`).join("") : ""}
+      <span class="grow"></span>${i > 0 ? `<button type="button" class="x" data-psup="${i}" aria-label="위로">↑</button>` : ""}<button type="button" class="x" data-psrm="${i}">빼기</button></div>
+    ${m ? `<div class="memo" data-memo="${esc(s.name)}" tabindex="0" role="button" title="종목 메모 (눌러서 고치기)">${esc(m)}</div>` : ""}
+    <div class="plan-stock-g">${PLAN_STOCK_FIELDS.map(([k, l, ph]) => `<label class="f ${k === "why" || k === "entry" ? "wide" : ""}"><span>${l}</span><textarea class="inp" rows="1" data-psf="${i}|${k}" placeholder="${esc(ph)}">${esc(s[k] || "")}</textarea></label>`).join("")}</div></div>`;
+}
+function queuePlan(now) {
+  const st = $("#plan-state"); if (st) st.textContent = "저장 중…";
+  clearTimeout(planUi.timer); planUi.timer = setTimeout(() => flushPlan(), now ? 50 : 900);
+}
+async function flushPlan(force) {
+  clearTimeout(planUi.timer); planUi.timer = null;
+  const p = planUi.draft; if (!p || !session) return;
+  const saved = planOf(p.date);
+  const empty = !p.market.trim() && !p.good.trim() && !p.bad.trim() && !p.rules.trim() && !p.after.trim() && !p.stocks.length && !p.photos.length && !p.score && p.maxLoss == null && p.maxTrades == null;
+  if (!saved && empty) { const st = $("#plan-state"); if (st) st.textContent = "아직 안 씀"; return; }
+  if (!force && saved && JSON.stringify({ ...saved, updatedAt: 0 }) === JSON.stringify({ ...p, updatedAt: 0 })) { const st = $("#plan-state"); if (st) st.textContent = "저장됨"; return; }
+  p.updatedAt = Date.now(); const doc = JSON.parse(JSON.stringify(p)); delete doc.id;
+  try { await api.savePlan(p.id, doc); const i = state.plans.findIndex(x => x.id === p.id); if (i >= 0) state.plans[i] = JSON.parse(JSON.stringify(p)); else state.plans.push(JSON.parse(JSON.stringify(p)));
+    const st = $("#plan-state"); if (st && planUi.draft === p) st.textContent = "저장됨 " + new Date().toTimeString().slice(0, 5); }
+  catch (err) { const st = $("#plan-state"); if (st) st.textContent = "저장 안 됨"; toast(/plans/.test(errMsg(err)) || /relation|exist|find/i.test(err?.message || "") ? "Supabase에 plans 표를 먼저 만들어 주세요 (setup.sql 맨 아래)" : errMsg(err)); }
+}
+async function planFiles(files) {
+  const p = planUi.draft; if (!files.length || !p) return;
+  const st = $("#plan-up"); if (st) { st.hidden = false; st.textContent = `사진 올리는 중… (${files.length})`; }
+  for (const f of files) {
+    try { const blob = await shrink(f); let type = blob.type || f.type; if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(type)) type = "image/png"; p.photos.push({ asset: await api.upload(blob, type), note: "" }); }
+    catch { toast("사진을 올리지 못했어요. 다시 시도해 주세요"); }
+  }
+  await flushPlan(true); if (location.hash === "#plan" && planUi.draft === p) renderPlanDay();
+}
+document.addEventListener("paste", e => {
+  if (sheet || !session || location.hash !== "#plan" || planUi.sub !== "day" || document.querySelector(".modal-wrap")) return;
+  const files = [...(e.clipboardData?.items || [])].filter(i => i.kind === "file" && i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean);
+  if (files.length) { e.preventDefault(); planFiles(files); }
+});
+window.addEventListener("hashchange", () => { if (location.hash !== "#plan") flushPlan(); });
+window.addEventListener("beforeunload", () => { if (planUi.timer) flushPlan(); });
+// 복기 창 왼쪽: 그날 시나리오에서 이 종목
+function planCard(d) {
+  const p = d.date && planOf(d.date); if (!p) return "";
+  const s = p.stocks.find(x => x.name === d.name);
+  const head = `<div class="mkt-head"><b>그날 시나리오</b><span>${esc(d.date)}${p.score ? " · 시나리오대로: " + esc(p.score) : ""} · <a href="#plan" data-goplan="${esc(d.date)}">열기</a></span></div>`;
+  if (!s) return head + `<div class="mkt-empty">${p.stocks.length ? `<b class="warn-t">시나리오에 없던 종목이에요.</b> 이날 관심 종목: ${p.stocks.map(x => esc(x.name)).join(", ")}` : "이날 시나리오에 관심 종목을 안 적었어요."}</div>`;
+  return head + `<dl class="plan-dl">${PLAN_STOCK_FIELDS.filter(([k]) => (s[k] || "").trim()).map(([k, l]) => `<dt>${l}</dt><dd>${esc(s[k])}</dd>`).join("") || `<dd class="muted">종목만 넣고 내용은 안 적었어요.</dd>`}</dl>`;
+}
+document.addEventListener("click", e => { const g = e.target.closest("[data-goplan]"); if (!g) return; planUi.sub = "day"; planUi.date = g.dataset.goplan; planUi.draft = null; const c = document.querySelector(".sheet-head [data-close]"); if (c) c.click(); });
 
 /* ---------- 렌더: 설정 ---------- */
 function renderSetup() {
@@ -2436,6 +2620,7 @@ function openTrade(id, opts = {}) {
     <div class="sheet-body">
      <div class="sh-col sh-ctx" aria-label="그날 시장 정보">
       <p class="sh-col-h">그날 시장 정보</p>
+      <div class="mkt" id="sh-plan" hidden></div>
       <div class="mkt" id="sh-us"></div>
       <div class="mkt" id="sh-news"></div>
       <div class="mkt" id="sh-mkt"></div>
@@ -2521,6 +2706,7 @@ function openTrade(id, opts = {}) {
     $("#sh-kind").innerHTML = kindChipT(d);
     markAutoSeg($("#t-kind .kind-seg"), autoKind(d));
     renderTradeStrat(d);
+    { const pc = planCard(d), pb = $("#sh-plan"); if (pb.dataset.k !== pc) { pb.dataset.k = pc; pb.innerHTML = pc; pb.hidden = !pc; } }
     const ak = autoKind(d), cap = tradeCap(d), kh = $("#t-kind-auto");
     if (kh) kh.textContent = !nm ? "" : cap != null ? `자동: ${ak} (당시 시총 ${capTxt(cap)})${stockKind(nm) && stockKind(nm) !== ak ? " · 직접 고른 분류가 먼저" : ""}` : "자동 분류: 당시 시총을 가져오는 중…";
     const st = $("#sh-title"); st.dataset.tipname = d.name || ""; st.classList.toggle("memo-dot", !!stockMemo(d.name || "")); st.tabIndex = stockMemo(d.name || "") ? 0 : -1;
@@ -2832,7 +3018,7 @@ function render() {
   const n = state.trades.filter(t => !t.missed).length, nm = state.trades.length - n;
   $("#countLabel").textContent = state.loaded ? `매매 ${n}건 기록됨${nm ? ` · 놓친 종목 ${nm}건` : ""}` : "기록을 불러오는 중";
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
-  if (v === "log") renderLog(); if (v === "stats") renderStats(); if (v === "notes") renderNotes(); if (v === "sectors") renderSectors(); if (v === "strategy") renderStrategy(); if (v === "setup") renderSetup();
+  if (v === "log") renderLog(); if (v === "stats") renderStats(); if (v === "notes") renderNotes(); if (v === "sectors") renderSectors(); if (v === "plan") renderPlanView(true); if (v === "setup") renderSetup();
 }
 
 /* ---------- 로그인 · 데이터 연결 ---------- */

@@ -144,3 +144,15 @@ create table if not exists public.stock_caps (
 alter table public.stock_caps enable row level security;
 drop policy if exists "read stock caps" on public.stock_caps;
 create policy "read stock caps" on public.stock_caps for select to authenticated using (true);
+
+-- 매매 시나리오: 그날그날 장 전 계획(시장 시나리오·관심 종목별 진입/손절/익절/비중·오늘 지킬 것) + 장 후 점검. doc.date = 날짜
+create table if not exists public.plans (
+  id uuid primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  doc jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.plans enable row level security;
+drop policy if exists "own plans" on public.plans;
+create policy "own plans" on public.plans for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
