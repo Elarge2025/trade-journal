@@ -192,7 +192,15 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 @media (max-width:640px){.sheet{left:0;top:0;transform:none;width:100%;height:100%;border-radius:0}}
 .sheet-head{display:flex;align-items:center;gap:10px;padding:calc(12px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 12px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
 .sheet-head h2{margin-right:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sheet-body{overflow-y:auto;padding:16px max(16px,env(safe-area-inset-right,0px)) calc(40px + env(safe-area-inset-bottom,0px)) 16px;display:flex;flex-direction:column;gap:16px}
+.sheet-body{flex:1;min-height:0;overflow-y:auto;padding:16px max(16px,env(safe-area-inset-right,0px)) calc(40px + env(safe-area-inset-bottom,0px)) 16px;display:flex;flex-direction:column;gap:16px}
+.sh-col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.sh-col-h{font-size:11.5px;font-weight:700;letter-spacing:.06em;color:var(--muted);margin:0 0 -6px}
+@media (min-width:1000px){
+  .sheet{width:min(1400px,calc(100% - 48px))}
+  .sheet-body{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:0;padding:0;overflow:hidden}
+  .sh-col{overflow-y:auto;min-height:0;padding:16px 18px calc(40px + env(safe-area-inset-bottom,0px));overscroll-behavior:contain}
+  .sh-ctx{background:var(--surface-2);border-right:1px solid var(--line)}
+}
 .coach{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:16px}
 .coach-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
 .coach-head h3{margin:0;color:var(--fg);font-size:15px}
@@ -1873,11 +1881,16 @@ function openTrade(id) {
       <button class="btn" type="button" data-close>닫기</button>
       <button class="btn primary" type="button" id="sh-save">저장</button></div>
     <div class="sheet-body">
-      <div class="calc" id="sh-calc"></div>
+     <div class="sh-col sh-ctx" aria-label="그날 시장 정보">
+      <p class="sh-col-h">그날 시장 정보</p>
       <div class="mkt" id="sh-us"></div>
       <div class="mkt" id="sh-news"></div>
       <div class="mkt" id="sh-mkt"></div>
       <div class="mkt" id="sh-fills" hidden></div>
+     </div>
+     <div class="sh-col sh-mine" aria-label="내 복기">
+      <p class="sh-col-h">내 복기</p>
+      <div class="calc" id="sh-calc"></div>
       <section class="card" style="display:flex;flex-direction:column;gap:12px">
         <div class="fgrid">
           <label class="f"><span>날짜 (매도일)</span><input class="inp" type="date" id="t-date"></label>
@@ -1916,6 +1929,7 @@ function openTrade(id) {
         <div class="f"><span style="font-size:12px;color:var(--muted);font-weight:600">복기 메모</span>${rtBox("t-memo", "잘한 점 · 고칠 점. 결과를 알고 본 이상적 타점 말고, 당시 가능했던 판단 기준으로")}</div>
         <label class="f"><span>교훈 한 줄</span><input class="inp" id="t-lesson" placeholder="다음에 똑같은 자리가 오면 이렇게 한다"></label>
       </section>
+     </div>
     </div>
   </aside>`;
   const d = draft;
