@@ -1442,6 +1442,57 @@ async function loadLive(names, force) {
     need.forEach(n => liveCache.set(n, { data: null, at: Date.now() })); r.data.forEach(x => liveCache.set(x.name, { data: x.data, at: Date.now() })); } catch {}
 }
 const pctTxt = p => p == null ? "–" : (p > 0 ? "+" : "") + (+p).toFixed(2) + "%";
+// 종목 확인·시세 서버 함수 (Supabase Edge Function 'stock')
+const stockFn = { ok: null };
+async function callStock(body) {
+  try {
+    const { data, error } = await sb.functions.invoke("stock", { body });
+    if (error) { const st = error.context?.status; if (st === 404 || /not found|Failed to send|FunctionsFetchError|FunctionsRelayError/i.test(error.message || "") || error.name === "FunctionsFetchError") stockFn.ok = false; return null; }
+    stockFn.ok = true; return data;
+  } catch { stockFn.ok = false; return null; }
+}
+const histCode = n => { const f = state.fills.find(x => x.name === n && x.code) || state.trades.find(x => x.name === n && x.code); return f ? String(f.code).replace(/^A/, "") : ""; };
+function pickStock(input, cands) {
+  return new Promise(res => {
+    const wrap = document.createElement("div"); wrap.className = "modal-wrap";
+    wrap.innerHTML = `<div class="modal" style="max-width:420px;display:flex;flex-direction:column;gap:10px">
+      <h2 style="margin:0">'${esc(input)}' 어떤 종목인가요?</h2>
+      <div style="display:flex;flex-direction:column;gap:6px">${cands.map((c, i) => `<button class="btn" type="button" data-i="${i}" style="justify-content:space-between"><b>${esc(c.name)}</b><span class="muted num" style="font-size:12px">${esc(c.code)} · ${esc(c.market || "")}</span></button>`).join("")}</div>
+      <div style="display:flex;justify-content:flex-end"><button class="btn ghost" type="button" data-i="-1">넣지 않기</button></div></div>`;
+    document.body.appendChild(wrap);
+    wrap.addEventListener("click", e => { const b = e.target.closest("[data-i]"); if (!b && e.target !== wrap) return; const i = b ? +b.dataset.i : -1; wrap.remove(); res(i >= 0 ? cands[i] : null); });
+  });
+}
+// 입력한 이름들을 실제 종목으로 확인 → [{name, code, market}], 못 찾은 이름 목록
+async function resolveStocks(names) {
+  const ok = [], miss = [];
+  for (const n of names) {
+    const r = await callStock({ action: "search", q: n });
+    if (!r) { ok.push({ name: n, code: histCode(n), unchecked: true }); continue; }
+    const items = r.items || [], norm = x => x.replace(/\s/g, "").toUpperCase();
+    const exact = items.filter(c => norm(c.name) === norm(n) || c.code === n.toUpperCase());
+    if (exact.length === 1) ok.push({ name: exact[0].name, code: exact[0].code, market: exact[0].market });
+    else if (items.length) { const c = await pickStock(n, exact.length ? exact : items); if (c) ok.push({ name: c.name, code: c.code, market: c.market }); }
+    else miss.push(n);
+  }
+  return { ok, miss };
+}
+async function refreshQuotes(stocks, quiet) {
+  const out = [];
+  for (let i = 0; i < stocks.length; i += 30) {
+    const r = await callStock({ action: "quote", stocks: stocks.slice(i, i + 30).map(x => ({ name: x.name, code: x.code })) });
+    if (!r) break; out.push(...(r.items || []));
+  }
+  out.forEach(x => liveCache.set(x.name, { data: x.data, at: Date.now() }));
+  if (!out.length && !quiet) toast(stockFn.ok === false ? "종목 확인 함수(stock)가 아직 없어요. 매시 10분·40분 자동 갱신만 돼요" : "시세를 가져오지 못했어요");
+  return out.length;
+}
+function miniCandles(c) {
+  if (!c || !c.length) return `<span class="muted">–</span>`;
+  const W = 98, H = 38, n = c.length, w = W / 7, lo = Math.min(...c.map(r => r[3])), hi = Math.max(...c.map(r => r[2])), y = v => hi === lo ? H / 2 : 2 + (hi - v) / (hi - lo) * (H - 4);
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="최근 ${n}일 일봉" style="vertical-align:middle">${c.map((r, i) => { const x = (7 - n + i) * w + w / 2, up = r[4] >= r[1], col = up ? "var(--up)" : "var(--down)", t = Math.min(y(r[1]), y(r[4])), h = Math.max(1, Math.abs(y(r[1]) - y(r[4])));
+    return `<line x1="${x}" x2="${x}" y1="${y(r[2])}" y2="${y(r[3])}" stroke="${col}" stroke-width="1"/><rect x="${x - w * 0.3}" y="${t}" width="${w * 0.6}" height="${h}" fill="${up ? "var(--surface)" : col}" stroke="${col}" stroke-width="1"><title>${r[0]} 시 ${r[1]} 고 ${r[2]} 저 ${r[3]} 종 ${r[4]}</title></rect>`; }).join("")}</svg>`;
+}
 function setSel(id) { secUi.sel = id; secUi.stock = ""; secUi.more = false; try { localStorage.setItem("tj-sector", id); } catch {} }
 function renderSectors() {
   const box = $("#view-sectors"); if (!box) return;
@@ -1467,11 +1518,11 @@ function renderSectors() {
   } else if (cur && secUi.sub === "stocks") {
     const rows = names.map(n => { const L = live(n), mine = trades.filter(t => t.name === n), done = mine.filter(t => t.c);
       return { n, L, cnt: mine.length, pnl: done.reduce((a, t) => a + t.c.pnl, 0), last: L?.news?.[0]?.t || "" }; }).sort((a, b) => (b.L?.chgPct ?? -999) - (a.L?.chgPct ?? -999));
-    body = names.length ? `<div class="tscroll"><table class="t"><thead><tr><th>종목</th><th style="text-align:right">현재가</th><th style="text-align:right">등락률</th><th style="text-align:left">최근 기사</th><th style="text-align:right">내 매매</th><th style="text-align:right">내 손익</th></tr></thead><tbody>
-      ${rows.map(r => `<tr><td><b>${esc(r.n)}</b> <span class="muted num" style="font-size:12px">${esc(r.L?.code || "")}</span></td><td class="num" style="text-align:right">${r.L?.price != null ? Math.round(r.L.price).toLocaleString("ko-KR") : "–"}</td>
-        <td class="num ${cls(r.L?.chgPct)}" style="text-align:right;font-weight:600">${pctTxt(r.L?.chgPct)}</td><td class="muted" style="font-size:12.5px;text-align:left">${esc(r.last ? r.last.slice(5) : "–")}</td>
+    body = names.length ? `<div class="tscroll"><table class="t"><thead><tr><th>종목</th><th style="text-align:right">현재가</th><th style="text-align:right">등락률</th><th style="text-align:right">전일 종가</th><th style="text-align:center">최근 7일</th><th style="text-align:left">최근 기사</th><th style="text-align:right">내 매매</th><th style="text-align:right">내 손익</th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td><b>${esc(r.n)}</b> <span class="muted num" style="font-size:12px">${esc(r.L?.code || "")}${r.L?.market ? " · " + esc(r.L.market) : ""}</span></td><td class="num" style="text-align:right">${r.L?.price != null ? Math.round(r.L.price).toLocaleString("ko-KR") : "–"}</td>
+        <td class="num ${cls(r.L?.chgPct)}" style="text-align:right;font-weight:600">${pctTxt(r.L?.chgPct)}</td><td class="num" style="text-align:right">${r.L?.prevClose != null ? Math.round(r.L.prevClose).toLocaleString("ko-KR") : "–"}</td><td style="text-align:center">${miniCandles(r.L?.candles)}</td><td class="muted" style="font-size:12.5px;text-align:left">${esc(r.last ? r.last.slice(5) : "–")}</td>
         <td class="num" style="text-align:right">${r.cnt || "–"}</td><td class="num ${cls(r.pnl)}" style="text-align:right">${r.cnt ? signed(r.pnl) : "–"}</td></tr>`).join("")}</tbody></table></div>
-      <p class="muted" style="font-size:12px;margin:8px 0 0">시세는 매시 10분·40분쯤 갱신돼요. ${(() => { const a = names.map(n => live(n)?.asOf).filter(Boolean).sort().pop(); return a ? "마지막 기준 " + esc(a.replace("T", " ").slice(0, 16)) : ""; })()}</p>`
+      <p class="muted" style="font-size:12px;margin:8px 0 0">'지금 새로고침'을 누르면 바로, 아니면 매시 10분·40분쯤 갱신돼요. ${(() => { const a = names.map(n => live(n)?.asOf).filter(Boolean).sort().pop(); return a ? "마지막 기준 " + esc(a.replace("T", " ").slice(0, 16)) : ""; })()}</p>`
       : `<p class="muted">먼저 위에서 종목을 넣어 주세요.</p>`;
   } else if (cur && secUi.sub === "trades") {
     const S = summarize(trades);
@@ -1491,9 +1542,9 @@ function renderSectors() {
     ${list.length ? `<div class="sec-tabs" role="tablist">${list.map(s => `<button type="button" role="tab" data-sec="${esc(s.id)}" aria-pressed="${s.id === secUi.sel}">${esc(s.name)}<small>${s.stocks.length}</small></button>`).join("")}</div>` : ""}
     ${cur ? `<div class="card">
         <div class="sec-head"><div style="flex:1;min-width:0"><h3>${esc(cur.name)}</h3>${cur.memo ? `<div class="sec-memo">${esc(cur.memo)}</div>` : ""}</div>
-          <button class="btn sm" type="button" id="sec-edit">이름·메모</button></div>
+          <button class="btn sm" type="button" id="sec-refresh">지금 새로고침</button><button class="btn sm" type="button" id="sec-edit">이름·메모</button></div>
         <div class="sec-stocks">${cur.stocks.length ? cur.stocks.map((x, i) => { const L = live(x.name);
-            return `<span class="sec-stock ${q && x.name.includes(q) ? "hit" : ""}"><b>${esc(x.name)}</b>${L?.chgPct != null ? `<span class="num ${cls(L.chgPct)}" style="font-size:12px;font-weight:600">${pctTxt(L.chgPct)}</span>` : ""}<button type="button" data-rm="${i}" aria-label="${esc(x.name)} 빼기">×</button></span>`; }).join("")
+            return `<span class="sec-stock ${q && x.name.includes(q) ? "hit" : ""}" title="${esc([x.code, x.market].filter(Boolean).join(" · ") || "종목코드 확인 전")}"><b>${esc(x.name)}</b>${x.code ? "" : `<span class="muted" style="font-size:11px">확인 전</span>`}${L?.chgPct != null ? `<span class="num ${cls(L.chgPct)}" style="font-size:12px;font-weight:600">${pctTxt(L.chgPct)}</span>` : ""}<button type="button" data-rm="${i}" aria-label="${esc(x.name)} 빼기">×</button></span>`; }).join("")
           : `<span class="muted">아직 종목이 없어요. 아래에 종목명을 넣어 주세요.</span>`}</div>
         <div class="sec-add"><input class="inp" id="sec-add-in" placeholder="종목명 넣기 · 쉼표로 여러 개" list="sec-names" autocomplete="off"><button class="btn primary" type="button" id="sec-add-btn">넣기</button></div>
         <div class="seg" id="sec-sub">${[["news", "뉴스"], ["stocks", "종목 시세"], ["trades", "내 매매"]].map(([k, l]) => `<button type="button" data-sub="${k}" aria-pressed="${secUi.sub === k}">${l}</button>`).join("")}</div>
@@ -1511,13 +1562,21 @@ function renderSectors() {
   const save = async (stocks, msg) => { try { await api.saveSector(cur.id, { ...cur, id: undefined, stocks, updatedAt: Date.now() }); cur.stocks = stocks; if (msg) toast(msg); renderSectors(); } catch (err) { toast(errMsg(err)); } };
   box.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => save(cur.stocks.filter((_, i) => i !== +b.dataset.rm), "뺐어요"));
   const addFrom = async raw => {
-    const add = [...new Set(raw.split(/[,\n]+/).map(x => x.trim()).filter(Boolean))].filter(n => !cur.stocks.some(x => x.name === n));
-    if (!add.length) { toast("넣을 종목명을 적어 주세요 (이미 있는 종목은 빠져요)"); return; }
-    const code = n => { const f = state.fills.find(x => x.name === n && x.code) || state.trades.find(x => x.name === n && x.code); return f ? String(f.code).replace(/^A/, "") : ""; };
-    await save([...cur.stocks, ...add.map(n => ({ name: n, code: code(n) }))], `${add.join(", ")} 넣었어요. 시세·뉴스는 매시 10분·40분쯤 채워져요`);
+    const names = [...new Set(raw.split(/[,\n]+/).map(x => x.trim()).filter(Boolean))];
+    if (!names.length) { toast("넣을 종목명을 적어 주세요"); return; }
+    if (ab) { ab.disabled = true; ab.textContent = "확인 중…"; }
+    const { ok, miss } = await resolveStocks(names);
+    const add = ok.filter((x, i, a) => !cur.stocks.some(y => y.name === x.name) && a.findIndex(z => z.name === x.name) === i);
+    if (!add.length) { if (ab) { ab.disabled = false; ab.textContent = "넣기"; } toast(miss.length ? `'${miss.join(", ")}' 종목을 못 찾았어요. 이름을 확인해 주세요` : "이미 들어 있는 종목이에요"); return; }
+    const unchecked = add.some(x => x.unchecked);
+    await save([...cur.stocks, ...add.map(({ unchecked, ...x }) => x)], `${add.map(x => x.name).join(", ")} 넣었어요` + (miss.length ? ` · 못 찾음: ${miss.join(", ")}` : "") + (unchecked ? " (종목 확인 함수가 없어 확인 없이 넣었어요)" : ""));
+    if (!unchecked && await refreshQuotes(add, true)) renderSectors();
   };
   const ai = $("#sec-add-in"), ab = $("#sec-add-btn");
   if (ab) { ab.onclick = () => addFrom(ai.value); ai.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); addFrom(ai.value); } }; }
+  const rf = $("#sec-refresh"); if (rf) rf.onclick = async () => { rf.disabled = true; rf.textContent = "가져오는 중…"; const n = await refreshQuotes(cur.stocks); if (n) toast(`${n}종목 새로고침했어요`);
+    const fixed = cur.stocks.map(x => { const L = liveCache.get(x.name)?.data; return !x.code && L?.code ? { ...x, code: L.code, market: L.market || x.market } : x; });
+    if (fixed.some((x, i) => x !== cur.stocks[i])) await save(fixed); else renderSectors(); };
   const qa = $("#sec-q-add"); if (qa) qa.onclick = () => { const v = secUi.q; secUi.q = ""; addFrom(v); };
   if (cur && names.some(n => !liveCache.has(n) || Date.now() - liveCache.get(n).at > 5 * 60e3)) loadLive(names).then(() => { if (location.hash === "#sectors" && secUi.sel === cur.id) renderSectors(); });
 }
@@ -1544,11 +1603,18 @@ function sectorForm(sc) {
     e.preventDefault();
     const name = $("#sc-name", wrap).value.trim(); if (!name) return;
     if (state.sectors.some(s => s.name === name && s.id !== sc.id)) { toast("같은 이름의 섹터가 이미 있어요"); return; }
-    const code = n => { const f = state.fills.find(x => x.name === n && x.code) || state.trades.find(x => x.name === n && x.code); return f ? String(f.code).replace(/^A/, "") : ""; };
-    const stocks = isNew ? [...new Set(($("#sc-stocks", wrap).value || "").split(/[,\n]+/).map(x => x.trim()).filter(Boolean))].map(n => ({ name: n, code: code(n) })) : sc.stocks;
+    let stocks = sc.stocks, miss = [];
+    if (isNew) {
+      const names = [...new Set(($("#sc-stocks", wrap).value || "").split(/[,\n]+/).map(x => x.trim()).filter(Boolean))];
+      const sub = wrap.querySelector("[type=submit]"); sub.disabled = true; sub.textContent = names.length ? "종목 확인 중…" : "저장 중…";
+      const r = await resolveStocks(names); miss = r.miss;
+      stocks = r.ok.filter((x, i, a) => a.findIndex(z => z.name === x.name) === i).map(({ unchecked, ...x }) => x);
+      sub.disabled = false; sub.textContent = "저장";
+    }
     const id = isNew ? crypto.randomUUID() : sc.id;
     const doc = { name, memo: $("#sc-memo", wrap).value.trim(), stocks, order: sc.order ?? Date.now(), createdAt: sc.createdAt || Date.now(), updatedAt: Date.now() };
-    try { await api.saveSector(id, doc); const i = state.sectors.findIndex(s => s.id === id); if (i >= 0) state.sectors[i] = { id, ...doc }; else state.sectors.push({ id, ...doc }); setSel(id); wrap.remove(); toast("저장했어요"); renderSectors(); }
+    try { await api.saveSector(id, doc); const i = state.sectors.findIndex(s => s.id === id); if (i >= 0) state.sectors[i] = { id, ...doc }; else state.sectors.push({ id, ...doc }); setSel(id); wrap.remove(); toast(miss.length ? `저장했어요 · 못 찾은 종목: ${miss.join(", ")}` : "저장했어요"); renderSectors();
+      if (isNew && stocks.length && stockFn.ok && await refreshQuotes(stocks, true)) renderSectors(); }
     catch (err) { toast(/sectors/.test(errMsg(err)) ? "Supabase에 sectors 표를 먼저 만들어 주세요" : errMsg(err)); }
   };
 }

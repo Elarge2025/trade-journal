@@ -33,8 +33,20 @@ def price(code):
         diff = -diff
     if kind in ("FALLING", "LOWER_LIMIT") and pct and pct > 0:
         pct = -pct
-    return {"price": p, "diff": diff, "chgPct": pct, "asOf": d.get("localTradedAt") or "", "market": d.get("marketStatus") or "",
-            "name": d.get("stockName") or ""}
+    ex = d.get("stockExchangeType") or {}
+    return {"price": p, "diff": diff, "chgPct": pct, "prevClose": (p - diff) if p is not None and diff is not None else None,
+            "asOf": d.get("localTradedAt") or "", "marketStatus": d.get("marketStatus") or "",
+            "market": ex.get("nameKor") or ex.get("name") or "", "name": d.get("stockName") or ""}
+
+
+def candles(code):
+    """최근 7거래일 일봉 [날짜, 시가, 고가, 저가, 종가, 거래량]."""
+    end = dt.datetime.now(KST).date()
+    start = end - dt.timedelta(days=25)
+    txt = news.fetch(f"https://api.finance.naver.com/siseJson.naver?symbol={code}&requestType=1"
+                     f"&startTime={start:%Y%m%d}&endTime={end:%Y%m%d}&timeframe=day", referer="https://finance.naver.com/")
+    rows = re.findall(r'\[\s*"(\d{8})"\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)', txt)
+    return [[f"{d[:4]}-{d[4:6]}-{d[6:]}", float(o), float(h), float(l), float(c), float(v)] for d, o, h, l, c, v in rows][-7:]
 
 
 def latest_news(code):
@@ -57,6 +69,10 @@ def one(name, code):
         out.update(price(code))
     except Exception as e:
         print(f"  · {name} 시세 실패: {e}")
+    try:
+        out["candles"] = candles(code)
+    except Exception as e:
+        print(f"  · {name} 일봉 실패: {e}")
     out["news"] = latest_news(code)
     out["status"] = "ok"
     return out

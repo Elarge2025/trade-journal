@@ -30,4 +30,6 @@ jobs:
           if [ -n "$ANTHROPIC_API_KEY" ]; then supabase secrets set ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" --project-ref "$PROJECT_REF"; else echo "::warning::ANTHROPIC_API_KEY가 없어서 AI 분석은 아직 안 돼요"; fi
       - name: 함수 배포
         if: env.SUPABASE_ACCESS_TOKEN != ''
-        run: supabase functions deploy coach --project-ref "$PROJECT_REF" --no-verify-jwt --use-api
+        run: |
+          supabase functions deploy coach --project-ref "$PROJECT_REF" --no-verify-jwt --use-api
+          supabase functions deploy stock --project-ref "$PROJECT_REF" --no-verify-jwt --use-api
