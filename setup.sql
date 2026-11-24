@@ -134,3 +134,13 @@ create table if not exists public.stock_live (
 alter table public.stock_live enable row level security;
 drop policy if exists "read stock live" on public.stock_live;
 create policy "read stock live" on public.stock_live for select to authenticated using (true);
+
+-- 매매 당시 시가총액 (종목 유형 자동 분류용, GitHub Actions가 채움). data = {code, shares, caps: {날짜: 억}}
+create table if not exists public.stock_caps (
+  name text primary key,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.stock_caps enable row level security;
+drop policy if exists "read stock caps" on public.stock_caps;
+create policy "read stock caps" on public.stock_caps for select to authenticated using (true);

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       test:
-        description: "확인만: '종목코드또는이름 날짜' (예: 005930 2026-11-20) 또는 기사 주소, 'us 티커'(예: us TSLA), 'sector 종목명'(예: sector 휴림로봇). 비우면 평소처럼 실행"
+        description: "확인만: '종목코드또는이름 날짜' (예: 005930 2026-11-20) 또는 기사 주소, 'us 티커'(예: us TSLA), 'sector 종목명'(예: sector 휴림로봇), 'cap 종목명'(예: cap 휴림로봇). 비우면 평소처럼 실행"
         default: ""
       force:
         description: "이미 가져온 것도 전부 다시"
@@ -53,6 +53,17 @@ jobs:
           if [[ "$TEST" == sector\ * ]]; then python scripts/sector.py --test "${TEST#sector }"; exit 0; fi
           if [ -n "$TEST" ]; then exit 0; fi
           python scripts/sector.py
+      - name: 매매 당시 시가총액 (종목 유형 자동 분류)
+        continue-on-error: true
+        env:
+          SUPABASE_URL: https://qayneaypdazflrvwcphs.supabase.co
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          TEST: ${{ inputs.test }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          if [[ "$TEST" == cap\ * ]]; then python scripts/caps.py --test "${TEST#cap }"; exit 0; fi
+          if [ -n "$TEST" ]; then exit 0; fi
+          python scripts/caps.py
       - name: 뉴스 가져와서 저장
         env:
           SUPABASE_URL: https://qayneaypdazflrvwcphs.supabase.co
@@ -60,7 +71,7 @@ jobs:
           TEST: ${{ inputs.test }}
           PYTHONUNBUFFERED: "1"
         run: |
-          if [[ "$TEST" == us\ * || "$TEST" == sector\ * ]]; then exit 0; fi
+          if [[ "$TEST" == us\ * || "$TEST" == sector\ * || "$TEST" == cap\ * ]]; then exit 0; fi
           if [[ "$TEST" == http* ]]; then python scripts/news.py --article "$TEST"; exit 0; fi
           if [ -n "$TEST" ]; then python scripts/news.py --test $TEST; exit 0; fi
           if [ "${{ github.event.schedule }}" = "40 * * * *" ]; then python scripts/news.py --articles-only; exit 0; fi
