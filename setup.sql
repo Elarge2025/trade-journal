@@ -112,3 +112,25 @@ create table if not exists public.us_prices (
 alter table public.us_prices enable row level security;
 drop policy if exists "read us prices" on public.us_prices;
 create policy "read us prices" on public.us_prices for select to authenticated using (true);
+
+-- 섹터 탭: 내가 만든 섹터와 종목 (본인만)
+create table if not exists public.sectors (
+  id uuid primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  doc jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.sectors enable row level security;
+drop policy if exists "own sectors" on public.sectors;
+create policy "own sectors" on public.sectors for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- 섹터 종목의 현재가·등락률·최근 뉴스 (GitHub Actions가 매시 10분·40분 채움). key = 종목명
+create table if not exists public.stock_live (
+  name text primary key,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.stock_live enable row level security;
+drop policy if exists "read stock live" on public.stock_live;
+create policy "read stock live" on public.stock_live for select to authenticated using (true);

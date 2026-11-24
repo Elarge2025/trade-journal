@@ -239,6 +239,29 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .mkt-flow small{display:block;font-size:11px;color:var(--muted)}
 .mkt-flow .num{font-size:12.5px;font-weight:600}
 .mkt-empty{font-size:12.5px;color:var(--muted)}
+.sec-search{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.sec-search .inp{flex:1 1 240px;max-width:360px}
+.sec-hits{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.sec-hit{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--surface);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.sec-tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;scrollbar-width:thin}
+.sec-tabs button{flex:0 0 auto;border:1px solid var(--line-strong);background:var(--surface);border-radius:999px;padding:6px 13px;font-weight:600;font-size:13px;cursor:pointer;color:var(--muted);white-space:nowrap}
+.sec-tabs button small{font-weight:500;margin-left:4px;color:var(--faint)}
+.sec-tabs button[aria-pressed="true"]{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+.sec-tabs button[aria-pressed="true"] small{color:inherit;opacity:.7}
+.sec-head{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}
+.sec-head h3{margin:0;font-size:18px}
+.sec-memo{color:var(--muted);font-size:13px;white-space:pre-wrap;margin-top:4px}
+.sec-stocks{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 8px}
+.sec-stock{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:4px 4px 4px 10px;background:var(--surface);font-size:13px}
+.sec-stock button{border:0;background:transparent;color:var(--faint);cursor:pointer;font-size:14px;line-height:1;padding:2px 6px;border-radius:6px}
+.sec-stock button:hover{background:var(--surface-2);color:var(--fg)}
+.sec-stock.hit{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.sec-add{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.sec-add .inp{flex:1 1 200px;max-width:320px}
+.sec-filter{display:flex;gap:4px;flex-wrap:wrap;margin:10px 0}
+.sec-filter button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer;color:var(--muted)}
+.sec-filter button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);font-weight:600}
+.news-list .stk{font-size:11.5px;font-weight:700;color:var(--accent);margin-right:6px}
 .us-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .us-row + .us-row{margin-top:8px}
 .us-lab{font-size:11.5px;font-weight:700;color:var(--muted);letter-spacing:.03em;min-width:64px}
@@ -376,6 +399,7 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
     <a href="#log" data-view="log">매매기록</a>
     <a href="#stats" data-view="stats">통계</a>
     <a href="#notes" data-view="notes">오답노트</a>
+    <a href="#sectors" data-view="sectors">섹터</a>
     <a href="#setup" data-view="setup">설정</a>
   </nav>
   <button class="btn primary" id="newTrade" type="button">＋ 매매 기록</button>
@@ -415,6 +439,9 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
   <!-- 오답노트 -->
   <section id="view-notes" data-viewpane="notes" hidden></section>
 
+  <!-- 섹터 -->
+  <section id="view-sectors" data-viewpane="sectors" hidden></section>
+
   <!-- 설정 -->
   <section id="view-setup" data-viewpane="setup" hidden></section>
 </main>
@@ -447,7 +474,7 @@ const PHOTO_PROMPTS = [
   {title:"매도 · 기타", q:"왜 여기서 팔았나 · 다시 보면 당시 가능했던 더 나은 판단은?"}
 ];
 
-const state = { us: new Map(), fills: [], fx: new Map(), coachReports: [], coachPeriod: (() => { try { return localStorage.getItem("tj-coach-period") || "90"; } catch { return "90"; } })(), market: new Map(), trades: [], weeks: [], cfg: {...DEFAULTS}, loaded: false, readOnly: false };
+const state = { sectors: [], us: new Map(), fills: [], fx: new Map(), coachReports: [], coachPeriod: (() => { try { return localStorage.getItem("tj-coach-period") || "90"; } catch { return "90"; } })(), market: new Map(), trades: [], weeks: [], cfg: {...DEFAULTS}, loaded: false, readOnly: false };
 let sb = null, session = null;
 const urlCache = new Map();
 const api = {
@@ -473,12 +500,15 @@ const api = {
     state.weeks = w.data.map(r => ({ id: r.id, ...r.doc }));
     try { const cr = await sb.from("coach_reports").select("id, created_at, model, period, text").order("created_at", { ascending: false }).limit(12); if (!cr.error) state.coachReports = cr.data; } catch {}
     try { const m = await sb.from("market_days").select("date, data").order("date", { ascending: false }).limit(2000); if (!m.error) state.market = new Map(m.data.map(r => [r.date, r.data])); } catch {}
+    try { const sc = await all("sectors", "id, doc"); if (!sc.error) state.sectors = sc.data.map(r => ({ id: r.id, ...r.doc, stocks: r.doc.stocks || [] })); else state.sectorsMissing = /exist|find|relation/i.test(sc.error.message || ""); } catch {}
     try { const u = await sb.from("us_prices").select("sym, data"); if (!u.error) state.us = new Map(u.data.map(r => [r.sym, r.data])); } catch {}
     applyCfg(s.data?.doc || {});
   },
   async saveTrade(id, doc) { const { error } = await sb.from("trades").upsert({ id, user_id: api.uid(), doc, updated_at: new Date().toISOString() }); if (error) throw error; },
   async deleteTrade(id) { const { error } = await sb.from("trades").delete().eq("id", id); if (error) throw error; },
   async saveWeek(id, doc) { const { error } = await sb.from("weeks").upsert({ id, user_id: api.uid(), doc, updated_at: new Date().toISOString() }); if (error) throw error; },
+  async saveSector(id, doc) { const { error } = await sb.from("sectors").upsert({ id, user_id: api.uid(), doc, updated_at: new Date().toISOString() }); if (error) throw error; },
+  async deleteSector(id) { const { error } = await sb.from("sectors").delete().eq("id", id); if (error) throw error; },
   async deleteWeek(id) { const { error } = await sb.from("weeks").delete().eq("id", id); if (error) throw error; },
   async saveSettings(doc) { const { error } = await sb.from("settings").upsert({ user_id: api.uid(), doc, updated_at: new Date().toISOString() }); if (error) throw error; },
   async upload(blob, type) {
@@ -640,7 +670,7 @@ function setStatus(msg, warn) {
 }
 
 /* ---------- 라우팅 ---------- */
-const VIEWS = ["log","stats","notes","setup"];
+const VIEWS = ["log","stats","notes","sectors","setup"];
 function route() {
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
   document.querySelectorAll("[data-viewpane]").forEach(p => p.hidden = p.dataset.viewpane !== v);
@@ -790,12 +820,13 @@ function usLine(date, name) {
 let usShown = "";
 function renderUs(date, name, force) {
   const box = $("#sh-us"); if (!box) return;
-  const key = date + "|" + name + "|" + usSyms(name).join(","); if (key === usShown && !force) return; usShown = key;
+  const key = date + "|" + name + "|" + usSyms(name).join(",") + "|" + sectorsOf(name).map(x => x.id).join(","); if (key === usShown && !force) return; usShown = key;
   const L = usLine(date, name), wd = d => "일월화수목금토"[new Date(d + "T00:00:00").getDay()];
   const chip = x => `<span class="us-chip"><small>${esc(x.label)}</small><b class="num ${cls(x.pct)}">${x.pct == null ? "–" : (x.pct > 0 ? "+" : "") + x.pct.toFixed(2) + "%"}</b></span>`;
   const syms = usSyms(name);
   box.innerHTML = `<div class="mkt-head"><b>전날 미국장</b><span>${L ? esc(L.ud) + "(" + wd(L.ud) + ") 마감 · 한국 " + esc(date || "") + " 아침 기준" : "날짜를 넣으면 그 전 미국장 등락이 나와요"}</span></div>
     ${!date ? "" : !L ? `<div class="mkt-empty">미국 시세가 아직 없어요. Supabase에 us_prices 표를 만들면 매시 10분·40분에 채워져요.</div>` : `<div class="us-row"><span class="us-lab">지수</span>${L.idx.map(chip).join("")}</div>`}
+    ${sectorLine(name)}
     ${name ? `<div class="us-row" style="margin-top:8px"><span class="us-lab">관련주</span>${L && syms.length ? L.rel.map(chip).join("") : syms.length ? syms.map(s => chip({ label: s, pct: null })).join("") : `<span class="muted" style="font-size:12.5px">${esc(name)}의 미국 관련주를 정해두면 이 종목 매매마다 나와요</span>`}
       <button type="button" class="btn sm" id="us-edit-btn">${syms.length ? "바꾸기" : "정하기"}</button></div>
       ${L && syms.some(s => !state.us.get(s)) ? `<div class="mkt-empty" style="margin-top:6px">새로 정한 종목 시세는 매시 10분·40분쯤 채워져요 (새로고침 후 보임).</div>` : ""}
@@ -1398,6 +1429,134 @@ function weekForm(w, suggest = "") {
     catch (err) { toast(errMsg(err)); }
   };
 }
+
+/* ---------- 렌더: 섹터 ---------- */
+const secUi = { sel: (() => { try { return localStorage.getItem("tj-sector") || ""; } catch { return ""; } })(), sub: "news", stock: "", q: "", more: false };
+const liveCache = new Map(); // 종목명 → { data, at }
+const sectorsOf = name => state.sectors.filter(s => s.stocks.some(x => x.name === name));
+const tradedNames = () => [...new Set(state.trades.map(t => t.name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
+async function loadLive(names, force) {
+  const need = names.filter(n => force || !liveCache.has(n) || Date.now() - liveCache.get(n).at > 5 * 60e3);
+  if (!need.length) return;
+  try { const r = await sb.from("stock_live").select("name, data").in("name", need); if (r.error) return;
+    need.forEach(n => liveCache.set(n, { data: null, at: Date.now() })); r.data.forEach(x => liveCache.set(x.name, { data: x.data, at: Date.now() })); } catch {}
+}
+const pctTxt = p => p == null ? "–" : (p > 0 ? "+" : "") + (+p).toFixed(2) + "%";
+function setSel(id) { secUi.sel = id; secUi.stock = ""; secUi.more = false; try { localStorage.setItem("tj-sector", id); } catch {} }
+function renderSectors() {
+  const box = $("#view-sectors"); if (!box) return;
+  const list = [...state.sectors].sort((a, b) => (a.order ?? a.createdAt ?? 0) - (b.order ?? b.createdAt ?? 0));
+  if (!list.find(s => s.id === secUi.sel)) secUi.sel = list[0]?.id || "";
+  const cur = list.find(s => s.id === secUi.sel);
+  const q = secUi.q.trim();
+  const hits = q ? list.filter(s => s.stocks.some(x => x.name.includes(q)) || s.name.includes(q)) : [];
+  const names = cur ? cur.stocks.map(x => x.name) : [];
+  const live = n => liveCache.get(n)?.data || null;
+  const trades = cur ? enriched().filter(t => names.includes(t.name)) : [];
+  let body = "";
+  if (cur && secUi.sub === "news") {
+    const all = names.filter(n => !secUi.stock || n === secUi.stock).flatMap(n => (live(n)?.news || []).map(x => ({ ...x, stk: n })));
+    const seen = new Set(), items = all.sort((a, b) => b.t.localeCompare(a.t)).filter(x => { const k = x.title.replace(/[^\p{L}\p{N}]/gu, "").slice(0, 40); if (seen.has(k)) return false; seen.add(k); return true; });
+    const N = secUi.more ? 200 : 30;
+    let lastDay = "";
+    body = `<div class="sec-filter">${["", ...names].map(n => `<button type="button" data-stk="${esc(n)}" aria-pressed="${secUi.stock === n}">${n ? esc(n) : "전체"}</button>`).join("")}</div>
+      ${items.length ? `<ul class="news-list">${items.slice(0, N).map(x => { const d = x.t.slice(0, 10), h = d !== lastDay ? `<li class="news-day">${esc(d)}</li>` : ""; lastDay = d;
+          return `${h}<li><time>${esc(x.t.slice(11))}</time><a href="${esc(x.url)}" target="_blank" rel="noopener"><span class="stk">${esc(x.stk)}</span>${esc(x.title)}</a><small>${esc(x.press)}</small></li>`; }).join("")}</ul>
+        ${items.length > N ? `<button class="btn sm" type="button" id="sec-more" style="margin-top:8px">${items.length - N}건 더 보기</button>` : ""}`
+      : `<p class="muted">${names.length ? "아직 뉴스를 안 가져왔어요. 종목을 넣으면 매시 10분·40분쯤 종목마다 최근 뉴스 20건씩 채워져요." : "먼저 위에서 종목을 넣어 주세요."}</p>`}`;
+  } else if (cur && secUi.sub === "stocks") {
+    const rows = names.map(n => { const L = live(n), mine = trades.filter(t => t.name === n), done = mine.filter(t => t.c);
+      return { n, L, cnt: mine.length, pnl: done.reduce((a, t) => a + t.c.pnl, 0), last: L?.news?.[0]?.t || "" }; }).sort((a, b) => (b.L?.chgPct ?? -999) - (a.L?.chgPct ?? -999));
+    body = names.length ? `<div class="tscroll"><table class="t"><thead><tr><th>종목</th><th style="text-align:right">현재가</th><th style="text-align:right">등락률</th><th style="text-align:left">최근 기사</th><th style="text-align:right">내 매매</th><th style="text-align:right">내 손익</th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td><b>${esc(r.n)}</b> <span class="muted num" style="font-size:12px">${esc(r.L?.code || "")}</span></td><td class="num" style="text-align:right">${r.L?.price != null ? Math.round(r.L.price).toLocaleString("ko-KR") : "–"}</td>
+        <td class="num ${cls(r.L?.chgPct)}" style="text-align:right;font-weight:600">${pctTxt(r.L?.chgPct)}</td><td class="muted" style="font-size:12.5px;text-align:left">${esc(r.last ? r.last.slice(5) : "–")}</td>
+        <td class="num" style="text-align:right">${r.cnt || "–"}</td><td class="num ${cls(r.pnl)}" style="text-align:right">${r.cnt ? signed(r.pnl) : "–"}</td></tr>`).join("")}</tbody></table></div>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">시세는 매시 10분·40분쯤 갱신돼요. ${(() => { const a = names.map(n => live(n)?.asOf).filter(Boolean).sort().pop(); return a ? "마지막 기준 " + esc(a.replace("T", " ").slice(0, 16)) : ""; })()}</p>`
+      : `<p class="muted">먼저 위에서 종목을 넣어 주세요.</p>`;
+  } else if (cur && secUi.sub === "trades") {
+    const S = summarize(trades);
+    body = trades.length ? `<p style="margin:0 0 10px"><b>${trades.length}건</b> <span class="muted">·</span> 승률 <b>${S.winRate != null ? Math.round(S.winRate * 100) + "%" : "–"}</b> <span class="muted">·</span> 누적 <b class="${cls(S.total)}">${signed(S.total)}원</b></p>
+      <div class="tscroll"><table class="t"><thead><tr><th>날짜</th><th style="text-align:left">종목</th><th style="text-align:left">유형</th><th>손익</th><th style="text-align:left">평가</th></tr></thead><tbody>
+      ${trades.slice(0, 200).map(t => `<tr data-open="${esc(t.id)}" style="cursor:pointer"><td class="num">${esc(t.date || "")}</td><td style="text-align:left"><b>${esc(t.name)}</b></td><td style="text-align:left">${esc(t.type || "")}</td><td class="num ${cls(t.c?.pnl)}">${t.c ? signed(t.c.pnl) : "–"}</td><td style="text-align:left">${gradeChip(t.grade)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="muted">이 섹터 종목으로 기록한 매매가 아직 없어요.</p>`;
+  }
+  box.innerHTML = `
+    <div class="section-head"><h2 class="grow">섹터</h2><button class="btn" type="button" id="sec-new">＋ 섹터 만들기</button></div>
+    ${state.sectorsMissing ? `<div class="notice">Supabase에 sectors 표가 아직 없어요. setup.sql 맨 아래 '섹터 탭' 부분을 SQL Editor에서 실행해 주세요.</div>` : ""}
+    <div class="sec-search"><input class="inp" type="search" id="sec-q" placeholder="종목명으로 찾기 · 같은 섹터 관련주가 나와요" value="${esc(secUi.q)}" list="sec-names" autocomplete="off"></div>
+    <datalist id="sec-names">${[...new Set([...tradedNames(), ...state.sectors.flatMap(s => s.stocks.map(x => x.name))])].map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+    ${q ? `<div class="sec-hits">${hits.length ? hits.map(s => `<div class="sec-hit"><button class="btn sm" type="button" data-go="${esc(s.id)}"><b>${esc(s.name)}</b></button>
+        ${s.stocks.map(x => `<span class="chip ${x.name.includes(q) ? "type" : ""}">${esc(x.name)}</span>`).join("")}</div>`).join("")
+      : `<div class="sec-hit"><span class="muted">'${esc(q)}'이(가) 들어간 섹터가 없어요.</span>${cur ? `<button class="btn sm" type="button" id="sec-q-add">${esc(cur.name)}에 넣기</button>` : ""}</div>`}</div>` : ""}
+    ${list.length ? `<div class="sec-tabs" role="tablist">${list.map(s => `<button type="button" role="tab" data-sec="${esc(s.id)}" aria-pressed="${s.id === secUi.sel}">${esc(s.name)}<small>${s.stocks.length}</small></button>`).join("")}</div>` : ""}
+    ${cur ? `<div class="card">
+        <div class="sec-head"><div style="flex:1;min-width:0"><h3>${esc(cur.name)}</h3>${cur.memo ? `<div class="sec-memo">${esc(cur.memo)}</div>` : ""}</div>
+          <button class="btn sm" type="button" id="sec-edit">이름·메모</button></div>
+        <div class="sec-stocks">${cur.stocks.length ? cur.stocks.map((x, i) => { const L = live(x.name);
+            return `<span class="sec-stock ${q && x.name.includes(q) ? "hit" : ""}"><b>${esc(x.name)}</b>${L?.chgPct != null ? `<span class="num ${cls(L.chgPct)}" style="font-size:12px;font-weight:600">${pctTxt(L.chgPct)}</span>` : ""}<button type="button" data-rm="${i}" aria-label="${esc(x.name)} 빼기">×</button></span>`; }).join("")
+          : `<span class="muted">아직 종목이 없어요. 아래에 종목명을 넣어 주세요.</span>`}</div>
+        <div class="sec-add"><input class="inp" id="sec-add-in" placeholder="종목명 넣기 · 쉼표로 여러 개" list="sec-names" autocomplete="off"><button class="btn primary" type="button" id="sec-add-btn">넣기</button></div>
+        <div class="seg" id="sec-sub">${[["news", "뉴스"], ["stocks", "종목 시세"], ["trades", "내 매매"]].map(([k, l]) => `<button type="button" data-sub="${k}" aria-pressed="${secUi.sub === k}">${l}</button>`).join("")}</div>
+        <div style="margin-top:12px">${body}</div>
+      </div>` : `<div class="card"><p class="muted" style="margin:0">섹터를 만들고 종목을 넣어두면, 종목명으로 같은 섹터 관련주를 찾고 섹터별 뉴스·시세·내 매매를 탭으로 볼 수 있어요. 예: 로봇 → 휴림로봇, 레인보우로보틱스, 두산로보틱스</p></div>`}`;
+  // 이벤트
+  const qi = $("#sec-q"); qi.oninput = () => { secUi.q = qi.value; const pos = qi.selectionStart; renderSectors(); const n = $("#sec-q"); n.focus(); try { n.setSelectionRange(pos, pos); } catch {} };
+  box.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { setSel(b.dataset.go); renderSectors(); });
+  box.querySelectorAll("[data-sec]").forEach(b => b.onclick = () => { setSel(b.dataset.sec); renderSectors(); });
+  box.querySelectorAll("[data-sub]").forEach(b => b.onclick = () => { secUi.sub = b.dataset.sub; renderSectors(); });
+  box.querySelectorAll("[data-stk]").forEach(b => b.onclick = () => { secUi.stock = b.dataset.stk; secUi.more = false; renderSectors(); });
+  const mb = $("#sec-more"); if (mb) mb.onclick = () => { secUi.more = true; renderSectors(); };
+  $("#sec-new").onclick = () => sectorForm(null);
+  const ed = $("#sec-edit"); if (ed) ed.onclick = () => sectorForm(cur);
+  const save = async (stocks, msg) => { try { await api.saveSector(cur.id, { ...cur, id: undefined, stocks, updatedAt: Date.now() }); cur.stocks = stocks; if (msg) toast(msg); renderSectors(); } catch (err) { toast(errMsg(err)); } };
+  box.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => save(cur.stocks.filter((_, i) => i !== +b.dataset.rm), "뺐어요"));
+  const addFrom = async raw => {
+    const add = [...new Set(raw.split(/[,\n]+/).map(x => x.trim()).filter(Boolean))].filter(n => !cur.stocks.some(x => x.name === n));
+    if (!add.length) { toast("넣을 종목명을 적어 주세요 (이미 있는 종목은 빠져요)"); return; }
+    const code = n => { const f = state.fills.find(x => x.name === n && x.code) || state.trades.find(x => x.name === n && x.code); return f ? String(f.code).replace(/^A/, "") : ""; };
+    await save([...cur.stocks, ...add.map(n => ({ name: n, code: code(n) }))], `${add.join(", ")} 넣었어요. 시세·뉴스는 매시 10분·40분쯤 채워져요`);
+  };
+  const ai = $("#sec-add-in"), ab = $("#sec-add-btn");
+  if (ab) { ab.onclick = () => addFrom(ai.value); ai.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); addFrom(ai.value); } }; }
+  const qa = $("#sec-q-add"); if (qa) qa.onclick = () => { const v = secUi.q; secUi.q = ""; addFrom(v); };
+  if (cur && names.some(n => !liveCache.has(n) || Date.now() - liveCache.get(n).at > 5 * 60e3)) loadLive(names).then(() => { if (location.hash === "#sectors" && secUi.sel === cur.id) renderSectors(); });
+}
+function sectorForm(sc) {
+  const isNew = !sc; sc = sc || { name: "", memo: "", stocks: [] };
+  const wrap = document.createElement("div"); wrap.className = "modal-wrap";
+  wrap.innerHTML = `<form class="modal" style="max-width:460px;display:flex;flex-direction:column;gap:12px">
+    <h2>${isNew ? "섹터 만들기" : "섹터 수정"}</h2>
+    <label class="f"><span>섹터 이름</span><input class="inp" id="sc-name" value="${esc(sc.name)}" placeholder="예: 로봇, 2차전지, 조선" required></label>
+    ${isNew ? `<label class="f"><span>종목 (쉼표로 여러 개, 나중에 더 넣어도 돼요)</span><input class="inp" id="sc-stocks" placeholder="예: 휴림로봇, 레인보우로보틱스" list="sec-names" autocomplete="off"></label>` : ""}
+    <label class="f"><span>메모 (이 섹터가 움직이는 재료, 대장주 등)</span><textarea class="inp" id="sc-memo">${esc(sc.memo || "")}</textarea></label>
+    <div class="acts" style="display:flex;gap:8px;justify-content:flex-end">${isNew ? "" : `<button class="btn danger" type="button" data-a="del" style="margin-right:auto">삭제</button>`}
+      <button class="btn" type="button" data-a="no">취소</button><button class="btn primary" type="submit">저장</button></div></form>`;
+  document.body.appendChild(wrap); $("#sc-name", wrap).focus();
+  wrap.addEventListener("click", async e => {
+    if (e.target === wrap) wrap.remove();
+    const a = e.target.closest("[data-a]"); if (!a) return;
+    if (a.dataset.a === "no") wrap.remove();
+    if (a.dataset.a === "del" && await confirmBox("섹터 삭제", `'${sc.name}' 섹터를 지울까요? 매매 기록은 그대로 남아요.`)) {
+      try { await api.deleteSector(sc.id); state.sectors = state.sectors.filter(s => s.id !== sc.id); wrap.remove(); toast("삭제했어요"); renderSectors(); } catch (err) { toast(errMsg(err)); }
+    }
+  });
+  wrap.querySelector("form").onsubmit = async e => {
+    e.preventDefault();
+    const name = $("#sc-name", wrap).value.trim(); if (!name) return;
+    if (state.sectors.some(s => s.name === name && s.id !== sc.id)) { toast("같은 이름의 섹터가 이미 있어요"); return; }
+    const code = n => { const f = state.fills.find(x => x.name === n && x.code) || state.trades.find(x => x.name === n && x.code); return f ? String(f.code).replace(/^A/, "") : ""; };
+    const stocks = isNew ? [...new Set(($("#sc-stocks", wrap).value || "").split(/[,\n]+/).map(x => x.trim()).filter(Boolean))].map(n => ({ name: n, code: code(n) })) : sc.stocks;
+    const id = isNew ? crypto.randomUUID() : sc.id;
+    const doc = { name, memo: $("#sc-memo", wrap).value.trim(), stocks, order: sc.order ?? Date.now(), createdAt: sc.createdAt || Date.now(), updatedAt: Date.now() };
+    try { await api.saveSector(id, doc); const i = state.sectors.findIndex(s => s.id === id); if (i >= 0) state.sectors[i] = { id, ...doc }; else state.sectors.push({ id, ...doc }); setSel(id); wrap.remove(); toast("저장했어요"); renderSectors(); }
+    catch (err) { toast(/sectors/.test(errMsg(err)) ? "Supabase에 sectors 표를 먼저 만들어 주세요" : errMsg(err)); }
+  };
+}
+function sectorLine(name) {
+  const secs = name ? sectorsOf(name) : []; if (!secs.length) return "";
+  return `<div class="us-row" style="margin-top:8px"><span class="us-lab">섹터</span>${secs.map(s => `<a class="btn sm" href="#sectors" data-gosec="${esc(s.id)}">${esc(s.name)}</a><span class="muted" style="font-size:12.5px">${s.stocks.filter(x => x.name !== name).slice(0, 6).map(x => esc(x.name)).join(", ")}${s.stocks.length > 7 ? " 외" : ""}</span>`).join("")}</div>`;
+}
+document.addEventListener("click", e => { const g = e.target.closest("[data-gosec]"); if (!g) return; setSel(g.dataset.gosec); const c = document.querySelector(".sheet-head [data-close]"); if (c) c.click(); });
 
 /* ---------- 렌더: 설정 ---------- */
 function renderSetup() {
@@ -2011,7 +2170,7 @@ function render() {
   const n = state.trades.length;
   $("#countLabel").textContent = state.loaded ? `매매 ${n}건 기록됨` : "기록을 불러오는 중";
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
-  if (v === "log") renderLog(); if (v === "stats") renderStats(); if (v === "notes") renderNotes(); if (v === "setup") renderSetup();
+  if (v === "log") renderLog(); if (v === "stats") renderStats(); if (v === "notes") renderNotes(); if (v === "sectors") renderSectors(); if (v === "setup") renderSetup();
 }
 
 /* ---------- 로그인 · 데이터 연결 ---------- */
