@@ -352,6 +352,71 @@ async function usPrices(syms: string[]) {
   return rows.map(r => ({ sym: r.sym, data: r.data }));
 }
 
+// ---------- 그날 시장 (코스피·코스닥 지수·거래대금·투자자별 순매수) → market_days ----------
+async function daumDays(market: string, start: string) {
+  const out: Record<string, Record<string, unknown>> = {};
+  for (let page = 1; page <= 5; page++) {
+    const txt = await get(`https://finance.daum.net/api/market_index/days?page=${page}&perPage=100&market=${market}&pagination=true`, "https://finance.daum.net/");
+    const rows = (JSON.parse(txt).data ?? []) as Record<string, number | string | null>[];
+    const e = (v: unknown) => v == null ? null : Math.round(Number(v) / 1e7) / 10;
+    for (const r of rows) {
+      const d = String(r.date ?? "").slice(0, 10), close = r.tradePrice as number | null, chg = r.changePrice as number | null;
+      const prev = close != null && chg != null ? close - chg : null;
+      out[d] = { close, chg, chgPct: prev ? Math.round(chg! / prev * 10000) / 100 : null, vol: r.accTradeVolume ?? null, value: r.accTradePrice ?? null,
+        _flow: { indiv: e(r.individualStraightPurchasePrice), foreign: e(r.foreignStraightPurchasePrice), inst: e(r.institutionStraightPurchasePrice) } };
+    }
+    if (rows.length < 100 || Object.keys(out).sort()[0] < start) break;
+  }
+  return out;
+}
+async function indexOhlc(code: string, start: string, end: string) {
+  const f = (d: string) => d.replace(/-/g, "");
+  const txt = await get(`https://api.finance.naver.com/siseJson.naver?symbol=${code}&requestType=1&startTime=${f(start)}&endTime=${f(end)}&timeframe=day`, "https://finance.naver.com/");
+  const out: Record<string, { open: number; high: number; low: number; close: number; vol: number }> = {};
+  for (const m of txt.matchAll(/\[\s*"(\d{8})"\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/g))
+    out[`${m[1].slice(0, 4)}-${m[1].slice(4, 6)}-${m[1].slice(6)}`] = { open: +m[2], high: +m[3], low: +m[4], close: +m[5], vol: +m[6] };
+  return out;
+}
+async function marketDays(days: number) {
+  const kst = new Date(Date.now() + 9 * 3600e3), end = kst.toISOString().slice(0, 10);
+  const start = new Date(kst.getTime() - days * 864e5).toISOString().slice(0, 10);
+  const merged: Record<string, Record<string, unknown>> = {}, notes: string[] = [];
+  for (const [key, code] of [["kospi", "KOSPI"], ["kosdaq", "KOSDAQ"]]) {
+    let daum: Record<string, Record<string, unknown>> = {}, ohlc: Awaited<ReturnType<typeof indexOhlc>> = {};
+    try { daum = await daumDays(code, start); } catch (e) { notes.push(`${key} daum: ${String(e).slice(0, 80)}`); }
+    try { ohlc = await indexOhlc(code, new Date(new Date(start).getTime() - 10 * 864e5).toISOString().slice(0, 10), end); } catch (e) { notes.push(`${key} naver: ${String(e).slice(0, 80)}`); }
+    const od = Object.keys(ohlc).sort();
+    for (const d of new Set([...Object.keys(daum), ...od])) {
+      if (d < start || d > end) continue;
+      const x = { ...(daum[d] ?? {}) } as Record<string, unknown>, flow = x._flow as Record<string, number | null> | undefined; delete x._flow;
+      const o = ohlc[d];
+      if (o) { x.open = o.open; x.high = o.high; x.low = o.low; if (x.close == null) x.close = o.close; }
+      if (x.chgPct == null && o) { const i = od.indexOf(d), pc = i > 0 ? ohlc[od[i - 1]].close : null; if (pc) { x.chg = Math.round((o.close - pc) * 100) / 100; x.chgPct = Math.round((o.close / pc - 1) * 10000) / 100; } }
+      if (x.close == null) continue;
+      const ent = merged[d] ??= {}; ent[key] = x;
+      if (flow && Object.values(flow).some(v => v != null)) ((ent.flow ??= {}) as Record<string, unknown>)[key] = flow;
+    }
+  }
+  const now = new Date().toISOString();
+  // 오늘은 장 마감 정리 뒤(15:45 이후)에만 저장
+  if (kst.getUTCHours() * 60 + kst.getUTCMinutes() < 15 * 60 + 45) delete merged[end];
+  // 이미 있는 값은 이번에 못 받은 항목(예: Daum이 막혀 거래대금·순매수 없음)만큼 남김
+  const ds = Object.keys(merged);
+  if (ds.length) {
+    const old = await sbGet(`market_days?select=date,data&date=in.${inList(ds)}`) as { date: string; data: Record<string, Record<string, unknown>> }[];
+    const keep = (a: Record<string, unknown> = {}, b: Record<string, unknown> = {}) => { const o = { ...a }; for (const [k, v] of Object.entries(b)) if (v != null) o[k] = v; return o; };
+    for (const r of old) {
+      const m = merged[r.date], od = r.data || {};
+      for (const k of ["kospi", "kosdaq"]) if (od[k] || m[k]) m[k] = keep(od[k], m[k] as Record<string, unknown>);
+      const of = (od.flow || {}) as Record<string, Record<string, unknown>>, nf = (m.flow || {}) as Record<string, Record<string, unknown>>;
+      const fl: Record<string, unknown> = {}; for (const k of ["kospi", "kosdaq"]) if (of[k] || nf[k]) fl[k] = keep(of[k], nf[k]);
+      if (Object.keys(fl).length) m.flow = fl;
+    }
+  }
+  await sbUpsert("market_days", "date", ds.map(d => ({ date: d, data: merged[d], updated_at: now })));
+  return { items: ds.sort().map(d => ({ date: d, data: merged[d] })), notes };
+}
+
 Deno.serve(async req => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "POST만 받아요" }, 405);
@@ -364,7 +429,7 @@ Deno.serve(async req => {
   if (!who.ok) return json({ error: "로그인이 만료됐어요. 다시 로그인해 주세요" }, 401);
 
   let body: { action?: string; q?: string; stocks?: { name: string; code?: string }[]; name?: string; code?: string; from?: string; to?: string; syms?: string[]; date?: string;
-    items?: { name: string; code?: string; dates: string[] }[]; urls?: string[] };
+    items?: { name: string; code?: string; dates: string[] }[]; urls?: string[]; days?: number };
   try { body = await req.json(); } catch { return json({ error: "잘못된 요청이에요" }, 400); }
 
   if (body.action === "search") return json({ items: await search(String(body.q ?? "")) });
@@ -408,5 +473,9 @@ Deno.serve(async req => {
     const syms = [...new Set((body.syms ?? []).map(x => String(x).toUpperCase().trim()).filter(x => /^\^?[A-Z0-9.\-]{1,12}$/.test(x)))].slice(0, 20);
     return json({ items: await usPrices(syms) });
   }
-  return json({ error: "action은 search, quote, news, usnews, caps, article, us 중 하나" }, 400);
+  if (body.action === "market") {
+    const days = Math.max(3, Math.min(400, Math.round(Number(body.days) || 10)));
+    return json(await marketDays(days));
+  }
+  return json({ error: "action은 search, quote, news, usnews, caps, article, us, market 중 하나" }, 400);
 });
