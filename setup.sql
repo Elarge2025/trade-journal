@@ -156,3 +156,15 @@ alter table public.plans enable row level security;
 drop policy if exists "own plans" on public.plans;
 create policy "own plans" on public.plans for all to authenticated
   using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- 메모: 혼자 생각 정리하는 자유 글. doc = title, body, pinned, createdAt, updatedAt
+create table if not exists public.memos (
+  id uuid primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  doc jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.memos enable row level security;
+drop policy if exists "own memos" on public.memos;
+create policy "own memos" on public.memos for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
