@@ -2006,18 +2006,18 @@ function renderLead(soft) {
   box.querySelectorAll("[data-lsf]").forEach(el => el.oninput = () => { const [i, k] = el.dataset.lsf.split("|"); p.leaders[+i][k] = el.value; if (el.tagName === "TEXTAREA") autosize(el); queuePlan(); });
   box.querySelectorAll(".lead-card").forEach(c => c.addEventListener("focusin", () => { leadUi.focus = +c.dataset.li; box.querySelectorAll(".lead-card").forEach(x => x.classList.toggle("on", x === c)); }));
   box.querySelectorAll(".lead-card").forEach(c => c.addEventListener("pointerdown", () => { leadUi.focus = +c.dataset.li; box.querySelectorAll(".lead-card").forEach(x => x.classList.toggle("on", x === c)); }));
-  box.querySelectorAll("[data-lrm]").forEach(b => b.onclick = async () => { const s = p.leaders[+b.dataset.lrm]; if ((s.photos || []).length || LEAD_FIELDS.some(([k]) => (s[k] || "").trim())) { if (!await confirmBox("주도주 빼기", `'${s.name}' 복기를 지울까요?`)) return; }
+  box.querySelectorAll("[data-lrm]").forEach(b => b.onclick = async () => { const s = p.leaders[+b.dataset.lrm]; if ((s.photos || []).length || ["why", "learn"].some(k => (s[k] || "").trim())) { if (!await confirmBox("주도주 빼기", `'${s.name}' 복기를 지울까요?`)) return; }
     p.leaders.splice(+b.dataset.lrm, 1); queuePlan(true); try { if ((s.photos || []).length) await api.removeImages(s.photos.map(x => x.asset)); } catch {} renderLead(); });
   box.querySelectorAll("[data-lup]").forEach(b => b.onclick = () => { const i = +b.dataset.lup; if (i > 0) { [p.leaders[i - 1], p.leaders[i]] = [p.leaders[i], p.leaders[i - 1]]; queuePlan(true); renderLead(); } });
   box.querySelectorAll("[data-lpick]").forEach(b => b.onclick = () => { leadUi.focus = +b.dataset.lpick; $("#lead-file").click(); });
   box.querySelectorAll("[data-lphrm]").forEach(b => b.onclick = async () => { const [i, j] = b.dataset.lphrm.split("|").map(Number); const ph = p.leaders[i].photos.splice(j, 1)[0]; await flushPlan(true); try { await api.removeImages([ph.asset]); } catch {} renderLead(); });
   box.querySelectorAll("[data-lphnote]").forEach(el => el.oninput = () => { const [i, j] = el.dataset.lphnote.split("|").map(Number); p.leaders[i].photos[j].note = el.value; queuePlan(); });
   box.querySelectorAll("[data-lzoom]").forEach(img => img.onclick = () => { const [i, j] = img.dataset.lzoom.split("|").map(Number); const s = p.leaders[i]; lightbox(s.photos.map(x => ({ asset: x.asset, title: `${date} ${s.name}`, note: x.note || "", marks: [] })), j); });
-  box.querySelectorAll("[data-lmiss]").forEach(b => b.onclick = () => { const s = p.leaders[+b.dataset.lmiss]; openTrade(null, { missed: true, preset: { date, name: s.name, reason: s.spot || "" } }); });
+  box.querySelectorAll("[data-lmiss]").forEach(b => b.onclick = () => { const s = p.leaders[+b.dataset.lmiss]; openTrade(null, { missed: true, preset: { date, name: s.name, reason: s.why || "" } }); });
   box.querySelectorAll("[data-memo]").forEach(el => el.onclick = () => editStockMemo(el, el.dataset.memo, () => renderLead()));
   if (!$("#lead-file")) { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.multiple = true; f.hidden = true; f.id = "lead-file"; document.body.appendChild(f); f.onchange = e => { leadFiles([...e.target.files]); e.target.value = ""; }; }
   const ai = $("#lead-add-in"), add = () => { const ns = ai.value.split(/[,\n]+/).map(x => x.trim()).filter(Boolean).filter(n => !p.leaders.some(s => s.name === n)); if (!ns.length) { toast(ai.value.trim() ? "이미 들어 있는 종목이에요" : "종목명을 적어 주세요"); return; }
-    ns.forEach(n => p.leaders.push({ name: n, theme: "", chg: "", value: "", why: "", spot: "", learn: "", photos: [] })); leadUi.focus = p.leaders.length - 1; queuePlan(true); renderLead(); setTimeout(() => { const el = document.querySelector(`[data-lsf="${p.leaders.length - ns.length}|theme"]`); el && el.focus(); }, 30); };
+    ns.forEach(n => p.leaders.push({ name: n, why: "", learn: "", photos: [] })); leadUi.focus = p.leaders.length - 1; queuePlan(true); renderLead(); setTimeout(() => { const el = document.querySelector(`[data-lsf="${p.leaders.length - ns.length}|why"]`); el && el.focus(); }, 30); };
   $("#lead-add").onclick = add; ai.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); add(); } };
 }
 function leadCard(s, i, tr, planNames, date) {
@@ -2028,12 +2028,10 @@ function leadCard(s, i, tr, planNames, date) {
       ${mine.length ? mine.map(t => `<span class="chip ${t.missed ? "" : t.c ? (t.c.pnl > 0 ? "type" : "mis") : ""}" data-open="${esc(t.id)}" style="cursor:pointer">${t.missed ? "놓친 종목 기록" : "내 매매 " + (t.c ? signed(t.c.pnl) : "")}</span>`).join("") : `<button type="button" class="btn sm" data-lmiss="${i}" title="매매 안 했으면 놓친 종목으로 남기기">놓친 종목으로 기록</button>`}
       <span class="grow"></span>${i > 0 ? `<button type="button" class="x" data-lup="${i}" aria-label="위로">↑</button>` : ""}<button type="button" class="x" data-lrm="${i}">빼기</button></div>
     ${memo ? `<div class="memo" data-memo="${esc(s.name)}" tabindex="0" role="button" title="종목 메모 (눌러서 고치기)">${esc(memo)}</div>` : ""}
-    <div class="lead-meta"><label class="f"><span>테마</span><input class="inp" data-lsf="${i}|theme" value="${esc(s.theme || "")}" placeholder="예: 로봇"></label>
-      <label class="f"><span>등락률 %</span><input class="inp num" data-lsf="${i}|chg" value="${esc(s.chg || "")}" placeholder="+29.9" inputmode="decimal"></label>
-      <label class="f"><span>거래대금 (억)</span><input class="inp num" data-lsf="${i}|value" value="${esc(s.value || "")}" placeholder="4,500" inputmode="numeric"></label></div>
-    <div class="lead-txt">${LEAD_FIELDS.map(([k, l, ph]) => `<label class="f lt-${k}"><span>${l}</span><textarea class="inp" rows="2" data-lsf="${i}|${k}" placeholder="${esc(ph)}">${esc(s[k] || "")}</textarea></label>`).join("")}</div>
+    <label class="f"><span>왜 주도주였나</span><textarea class="inp" rows="3" data-lsf="${i}|why" placeholder="재료·테마, 거래대금이 어떻게 몰렸나, 대장인지 후속주인지">${esc(s.why || "")}</textarea></label>
     <div class="lead-ph">${(s.photos || []).map((ph, j) => `<figure><img data-path="${esc(ph.asset)}" alt="${esc(ph.note || s.name + " 차트")}" data-lzoom="${i}|${j}"><figcaption><input class="inp" data-lphnote="${i}|${j}" value="${esc(ph.note || "")}" placeholder="이 차트에서 볼 자리"><button type="button" class="btn sm danger" data-lphrm="${i}|${j}">빼기</button></figcaption></figure>`).join("")}
       <button type="button" class="lead-ph-add" data-lpick="${i}">＋ 차트 (이 카드를 누른 뒤 Ctrl+V 또는 여기를 눌러 고르기)</button></div>
+    <label class="f"><span>배운 점</span><textarea class="inp" rows="2" data-lsf="${i}|learn" placeholder="다음에 비슷한 날 무엇을 볼지">${esc(s.learn || "")}</textarea></label>
     ${newsLinks(date, s.name, "")}
   </div>`;
 }
