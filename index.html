@@ -1929,7 +1929,7 @@ function renderMemo(soft) {
     try { if (saved) await api.deleteMemo(d.id); state.memos = state.memos.filter(m => m.id !== d.id); memoUi.sel = ""; memoUi.draft = null; if (saved) toast("지웠어요"); renderMemo(); } catch (err) { toast(errMsg(err)); }
   };
 }
-function memoGrow(el) { if (!el) return; el.style.height = "auto"; el.style.height = Math.max(window.innerHeight * 0.55, el.scrollHeight + 4) + "px"; }
+function memoGrow(el) { if (!el) return; keepScroll(el, () => { el.style.height = "auto"; el.style.height = Math.max(window.innerHeight * 0.55, el.scrollHeight + 4) + "px"; }); }
 function queueMemo() { const s = $("#memo-state"); if (s) s.textContent = "저장 중…"; clearTimeout(memoUi.timer); memoUi.timer = setTimeout(flushMemo, 800); }
 async function flushMemo(force) {
   clearTimeout(memoUi.timer); memoUi.timer = null;
@@ -2819,7 +2819,12 @@ function drawEditor(photo, onDone) {
     if (b.dataset.a === "done") { commitText(); photo.marks = marks; close(); onDone && onDone(); toast("그림을 넣었어요. 저장을 눌러 주세요"); }
   });
 }
-function autosize(el) { if (!el || el.tagName !== "TEXTAREA") return; el.style.height = "auto"; el.style.height = (el.scrollHeight + 2) + "px"; }
+// 높이를 잠깐 auto로 줄였다 늘리면 브라우저가 화면을 커서 쪽으로 끌어내리므로, 바깥 스크롤 위치를 기억했다가 되돌림
+function keepScroll(el, fn) {
+  const saved = []; for (let p = el.parentElement; p; p = p.parentElement) if (p.scrollHeight > p.clientHeight && p.scrollTop) saved.push([p, p.scrollTop]);
+  const wy = window.scrollY; fn(); saved.forEach(([p, t]) => { p.scrollTop = t; }); if (window.scrollY !== wy) window.scrollTo(window.scrollX, wy);
+}
+function autosize(el) { if (!el || el.tagName !== "TEXTAREA") return; keepScroll(el, () => { el.style.height = "auto"; el.style.height = (el.scrollHeight + 2) + "px"; }); }
 function autosizeAll(root) { root?.querySelectorAll("textarea.inp").forEach(autosize); }
 document.addEventListener("input", e => { if (e.target.closest?.(".sheet")) autosize(e.target); });
 window.addEventListener("resize", () => { if (sheet) autosizeAll(document.querySelector(".sheet")); });
