@@ -266,21 +266,21 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .wk-days{display:flex;flex-direction:column;gap:4px;font-size:12.5px}.wk-days>div{display:grid;grid-template-columns:44px minmax(0,1fr) auto 34px;gap:8px;align-items:center}.wk-days i{display:block;height:8px;border-radius:4px}
 .up-bg{background:var(--up,#C8312B);opacity:.7}.down-bg{background:var(--down,#1C5FA8);opacity:.7}
 .wk-facts{margin:0;padding-left:18px;font-size:13px;display:flex;flex-direction:column;gap:3px}
-.memo-wrap{display:grid;grid-template-columns:280px minmax(0,1fr);gap:16px;align-items:start}
-.memo-side{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px;display:flex;flex-direction:column;gap:8px;position:sticky;top:76px;max-height:calc(100dvh - 100px)}
-.memo-side-h{display:flex;flex-direction:column;gap:6px}
-.memo-items{overflow-y:auto;display:flex;flex-direction:column;gap:2px;min-height:0}
-.memo-item{all:unset;box-sizing:border-box;cursor:pointer;padding:9px 10px;border-radius:9px;display:flex;flex-direction:column;gap:2px;min-width:0}
-.memo-item:hover{background:var(--surface-2)}.memo-item[aria-pressed="true"]{background:var(--accent-soft)}
-.memo-item b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.memo-item span{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.memo-item em{font-style:normal;margin-right:4px}
-.memo-main{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 22px 22px;min-width:0;min-height:60vh}
-.memo-bar{display:flex;gap:8px;align-items:center;margin-bottom:6px}.memo-bar .grow{flex:1}.memo-back{display:none}
+.memo-side-h{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}.memo-side-h .grow{flex:1}.memo-side-h .inp{width:220px;max-width:100%}
+.memo-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.memo-item{all:unset;box-sizing:border-box;cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 14px 12px;display:flex;flex-direction:column;gap:6px;min-width:0;height:168px;overflow:hidden;transition:box-shadow .12s,border-color .12s}
+.memo-item:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(0,0,0,.06)}.memo-item:focus-visible{outline:2px solid var(--accent)}
+.memo-item b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.memo-pv{font-size:13px;line-height:1.55;color:var(--muted);white-space:pre-wrap;overflow:hidden;max-height:calc(1.55em * 5)}
+.memo-item em{margin-top:auto;font-style:normal;font-size:11.5px;color:var(--faint)}
+.memo-wrap.has-sel .memo-side{display:none}.memo-wrap:not(.has-sel) .memo-main{display:none}
+.memo-main{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 22px 22px;min-width:0;min-height:60vh;max-width:860px;margin:0 auto}
+.memo-bar{display:flex;gap:8px;align-items:center;margin-bottom:6px}.memo-bar .grow{flex:1}
 .memo-title{all:unset;box-sizing:border-box;width:100%;font-size:22px;font-weight:700;padding:6px 0;color:var(--fg)}
 .memo-title::placeholder{color:var(--faint,var(--muted))}
 .memo-meta{font-size:12px;margin-bottom:10px}
 .memo-body{all:unset;box-sizing:border-box;width:100%;display:block;font-size:15.5px;line-height:1.75;white-space:pre-wrap;color:var(--fg);resize:none;min-height:55vh}
-.memo-empty{display:grid;place-items:center;min-height:50vh;text-align:center}
-@media (max-width:759px){.memo-wrap{grid-template-columns:1fr}.memo-side{position:static;max-height:none}.memo-wrap.has-sel .memo-side{display:none}.memo-wrap:not(.has-sel) .memo-main{display:none}.memo-back{display:inline-flex}.memo-main{padding:12px 14px 18px}}
+@media (max-width:559px){.memo-items{grid-template-columns:1fr 1fr;gap:8px}.memo-item{height:140px;padding:11px}.memo-pv{max-height:calc(1.55em * 4)}.memo-side-h .inp{width:100%;order:3}.memo-main{padding:12px 14px 18px}}
 .plan-nav{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.plan-nav .grow{flex:1}.plan-state{font-size:12.5px}
 .plan-cols{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px;align-items:start}
 @media (max-width:999px){.plan-cols{grid-template-columns:1fr}}
@@ -1892,7 +1892,6 @@ function renderMemo(soft) {
   if (soft && box.contains(document.activeElement) && document.activeElement.matches("input,textarea")) return;
   const list = memoList();
   if (memoUi.sel && !state.memos.some(m => m.id === memoUi.sel) && memoUi.draft?.id !== memoUi.sel) memoUi.sel = "";
-  if (!memoUi.sel && list[0] && window.innerWidth >= 760) memoUi.sel = list[0].id;
   const cur = memoUi.draft?.id === memoUi.sel ? memoUi.draft : state.memos.find(m => m.id === memoUi.sel);
   if (cur && memoUi.draft?.id !== cur.id) memoUi.draft = JSON.parse(JSON.stringify(cur));
   const d = memoUi.sel ? memoUi.draft : null;
@@ -1900,27 +1899,27 @@ function renderMemo(soft) {
     ${state.memosMissing ? `<div class="notice warn">Supabase에 memos 표가 아직 없어서 메모를 저장할 수 없어요. setup.sql 맨 아래 '메모' 부분을 SQL Editor에서 실행해 주세요.</div>` : ""}
     <div class="memo-wrap ${d ? "has-sel" : ""}">
       <aside class="memo-side">
-        <div class="memo-side-h"><input class="inp" id="memo-q" placeholder="메모 검색" value="${esc(memoUi.q)}"><button class="btn primary" type="button" id="memo-new">＋ 새 메모</button></div>
-        <div class="memo-items">${list.length ? list.map(m => `<button type="button" class="memo-item" data-mid="${esc(m.id)}" aria-pressed="${m.id === memoUi.sel}">
-            <b>${m.pinned ? "📌 " : ""}${esc(memoTitle(m))}</b><span><em class="num">${esc(memoWhen(m.updatedAt))}</em> ${esc((m.body || "").replace(/\s+/g, " ").trim().slice(0, 60))}</span></button>`).join("")
+        <div class="memo-side-h"><h2 class="grow" style="margin:0">메모</h2><input class="inp" id="memo-q" placeholder="메모 검색" value="${esc(memoUi.q)}"><button class="btn primary" type="button" id="memo-new">＋ 새 메모</button></div>
+        <div class="memo-items">${list.length ? list.map(m => { const pv = (m.title || "").trim() ? (m.body || "").trim() : (m.body || "").trim().split("\n").slice(1).join("\n").trim(); return `<button type="button" class="memo-item" data-mid="${esc(m.id)}">
+            <b>${m.pinned ? "📌 " : ""}${esc(memoTitle(m))}</b><span class="memo-pv">${esc(pv.slice(0, 220))}</span><em class="num">${esc(memoWhen(m.updatedAt))}</em></button>`; }).join("")
           : `<p class="muted" style="margin:8px 4px">${memoUi.q ? "찾는 메모가 없어요." : "아직 메모가 없어요. 생각나는 걸 그냥 적어 보세요."}</p>`}</div>
       </aside>
       <section class="memo-main">${d ? `
-        <div class="memo-bar"><button class="btn sm memo-back" type="button" id="memo-back">← 목록</button><span class="muted plan-state" id="memo-state">${state.memos.some(m => m.id === d.id) ? "저장됨" : "아직 안 씀"}</span><span class="grow"></span>
+        <div class="memo-bar"><button class="btn sm" type="button" id="memo-back">← 목록</button><span class="muted plan-state" id="memo-state">${state.memos.some(m => m.id === d.id) ? "저장됨" : "아직 안 씀"}</span><span class="grow"></span>
           <button class="btn sm" type="button" id="memo-pin" aria-pressed="${!!d.pinned}">${d.pinned ? "고정 풀기" : "위에 고정"}</button><button class="btn sm danger" type="button" id="memo-del">삭제</button></div>
         <input class="memo-title" id="memo-title" value="${esc(d.title || "")}" placeholder="제목">
         <div class="muted memo-meta">${d.createdAt ? `${new Date(d.createdAt).toLocaleDateString("ko-KR")} 작성` : ""}${d.updatedAt && d.updatedAt !== d.createdAt ? ` · ${new Date(d.updatedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 고침` : ""}</div>
         <textarea class="memo-body" id="memo-body" placeholder="그냥 생각나는 대로 적어요.">${esc(d.body || "")}</textarea>`
-        : `<div class="memo-empty muted">왼쪽에서 메모를 고르거나 '＋ 새 메모'를 눌러요.</div>`}</section>
+        : ""}</section>
     </div>`;
   const q = $("#memo-q"); q.oninput = () => { memoUi.q = q.value; const pos = q.selectionStart; renderMemo(); const q2 = $("#memo-q"); q2.focus(); q2.setSelectionRange(pos, pos); };
   $("#memo-new").onclick = () => { flushMemo(); const now = Date.now(); memoUi.draft = { id: crypto.randomUUID(), title: "", body: "", pinned: false, createdAt: now, updatedAt: now }; memoUi.sel = memoUi.draft.id; memoUi.q = ""; renderMemo(); $("#memo-body")?.focus(); };
-  box.querySelectorAll("[data-mid]").forEach(b => b.onclick = () => { flushMemo(); memoUi.sel = b.dataset.mid; memoUi.draft = null; renderMemo(); });
+  box.querySelectorAll("[data-mid]").forEach(b => b.onclick = () => { memoUi.sel = b.dataset.mid; memoUi.draft = null; renderMemo(); window.scrollTo(0, 0); });
   if (!d) return;
   const body = $("#memo-body"); memoGrow(body);
   $("#memo-title").oninput = e => { d.title = e.target.value; queueMemo(); };
   body.oninput = () => { d.body = body.value; memoGrow(body); queueMemo(); };
-  $("#memo-back").onclick = () => { flushMemo(); memoUi.sel = ""; memoUi.draft = null; renderMemo(); };
+  $("#memo-back").onclick = async () => { await flushMemo(); memoUi.sel = ""; memoUi.draft = null; renderMemo(); window.scrollTo(0, 0); };
   $("#memo-pin").onclick = () => { d.pinned = !d.pinned; flushMemo(true).then(() => renderMemo()); };
   $("#memo-del").onclick = async () => {
     const saved = state.memos.some(m => m.id === d.id);
@@ -1941,7 +1940,7 @@ async function flushMemo(force) {
   try { await api.saveMemo(d.id, doc); const copy = { ...doc, id: d.id }, i = state.memos.findIndex(m => m.id === d.id); if (i >= 0) state.memos[i] = copy; else state.memos.push(copy);
     if (s && memoUi.draft === d) s.textContent = "저장됨 " + new Date().toTimeString().slice(0, 5);
     const it = document.querySelector(`.memo-item[data-mid="${d.id}"]`);
-    if (it) { it.querySelector("b").textContent = (d.pinned ? "📌 " : "") + memoTitle(d); } else if (location.hash === "#memo" && !document.activeElement?.matches?.(".memo-body,.memo-title")) renderMemo();
+    if (memoUi.sel !== d.id && location.hash === "#memo") renderMemo();
   } catch (err) { if (s) s.textContent = "저장 안 됨"; toast(/memos|relation|exist|find/i.test(err?.message || "") ? "Supabase에 memos 표를 먼저 만들어 주세요 (setup.sql 맨 아래)" : errMsg(err)); }
 }
 window.addEventListener("hashchange", () => { if (location.hash !== "#memo") flushMemo(); });
