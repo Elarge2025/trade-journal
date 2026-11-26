@@ -62,8 +62,8 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .brand{display:flex;align-items:baseline;gap:8px;margin-right:auto}
 .brand b{font-size:17px;letter-spacing:-.02em}
 .brand span{font-size:12px;color:var(--muted)}
-@media (min-width:1000px) and (max-width:1199px){.brand span{display:none}}
-.topbar-in{max-width:1180px}
+@media (min-width:1000px) and (max-width:1599px){.brand span{display:none}}
+.topbar-in{max-width:1240px}
 .tabs{display:flex;gap:2px;background:var(--surface-2);padding:3px;border-radius:9px;overflow-x:auto;max-width:100%}
 .tabs a{padding:6px 10px;border-radius:7px;color:var(--muted);text-decoration:none;font-weight:600;font-size:13px;white-space:nowrap}
 .tabs a[aria-current="page"]{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08)}
@@ -281,6 +281,16 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .memo-meta{font-size:12px;margin-bottom:10px}
 .memo-body{all:unset;box-sizing:border-box;width:100%;display:block;font-size:15.5px;line-height:1.75;white-space:pre-wrap;color:var(--fg);resize:none;min-height:55vh}
 @media (max-width:559px){.memo-items{grid-template-columns:1fr 1fr;gap:8px}.memo-item{height:140px;padding:11px}.memo-pv{max-height:calc(1.55em * 3)}.memo-side-h .inp{width:100%;order:3}.memo-main{padding:12px 14px 18px}}
+.lead-card{display:flex;flex-direction:column;gap:10px;margin-top:12px;border-left:3px solid transparent}.lead-card.on{border-left-color:var(--accent)}
+.lead-card .x{border:0;background:none;color:var(--muted);cursor:pointer;font-size:12px;padding:2px 4px}
+.lead-card .memo{font-size:12.5px;color:var(--muted);background:var(--surface-2);border-radius:8px;padding:6px 8px;cursor:pointer;white-space:pre-wrap}
+.lead-meta{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:8px}
+.lead-ph{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.lead-ph figure{margin:0;display:flex;flex-direction:column;gap:6px}.lead-ph img{width:100%;border-radius:8px;border:1px solid var(--line);cursor:zoom-in;background:var(--surface-2);min-height:80px;object-fit:contain}.lead-ph figcaption{display:flex;gap:6px}
+.lead-ph-add{all:unset;box-sizing:border-box;cursor:pointer;border:1.5px dashed var(--line);border-radius:10px;padding:14px;text-align:center;font-size:12.5px;color:var(--muted);min-height:64px;display:grid;place-items:center}.lead-ph-add:hover{border-color:var(--accent);color:var(--accent)}
+.lead-add{margin-top:12px}
+.lead-txt{display:grid;grid-template-columns:1fr 1fr;gap:8px}.lead-txt .lt-learn{grid-column:1/-1}@media (max-width:700px){.lead-txt{grid-template-columns:1fr}}
+@media (max-width:560px){.lead-meta{grid-template-columns:1fr 1fr}.lead-meta .f:first-child{grid-column:1/-1}}
 .plan-nav{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.plan-nav .grow{flex:1}.plan-state{font-size:12.5px}
 .plan-cols{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px;align-items:start}
 @media (max-width:999px){.plan-cols{grid-template-columns:1fr}}
@@ -509,6 +519,7 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
   <nav class="tabs" aria-label="화면">
     <a href="#log" data-view="log">매매기록</a>
     <a href="#plan" data-view="plan">매매 시나리오</a>
+    <a href="#lead" data-view="lead">주도주</a>
     <a href="#stats" data-view="stats">통계</a>
     <a href="#notes" data-view="notes">오답노트</a>
     <a href="#week" data-view="week">주간 평가</a>
@@ -550,6 +561,8 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 
   <!-- 매매 시나리오 (+ 전략 모음) -->
   <section id="view-plan" data-viewpane="plan" hidden></section>
+  <!-- 주도주 복기 -->
+  <section id="view-lead" data-viewpane="lead" hidden></section>
   <!-- 주간 평가 -->
   <section id="view-week" data-viewpane="week" hidden></section>
   <!-- 메모 -->
@@ -862,7 +875,7 @@ function setStatus(msg, warn) {
 }
 
 /* ---------- 라우팅 ---------- */
-const VIEWS = ["log","plan","stats","notes","week","memo","sectors","setup"];
+const VIEWS = ["log","plan","lead","stats","notes","week","memo","sectors","setup"];
 function route() {
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
   document.querySelectorAll("[data-viewpane]").forEach(p => p.hidden = p.dataset.viewpane !== v);
@@ -1946,6 +1959,100 @@ async function flushMemo(force) {
 window.addEventListener("hashchange", () => { if (location.hash !== "#memo") flushMemo(); });
 window.addEventListener("beforeunload", () => { if (memoUi.timer) flushMemo(); });
 
+/* ---------- 주도주 복기 (그날 plans 문서의 leaders에 저장, 시나리오와 같은 날짜·같은 초안 공유) ---------- */
+const LEAD_FIELDS = [["why", "왜 주도주였나", "재료·테마, 거래대금이 어떻게 몰렸나, 대장인지 후속주인지"], ["spot", "어디서 매매할 수 있었나", "그 시점에 보이던 정보로. 예: 09:12 전고점 박스 돌파, 1분 대금 120억"], ["learn", "배운 점", "다음에 비슷한 날 무엇을 볼지"]];
+const leadUi = { focus: -1 };
+function ensurePlanDraft() {
+  if (!planUi.date) planUi.date = defaultLeadDate();
+  const saved = planOf(planUi.date);
+  if (!planUi.draft || planUi.draft.date !== planUi.date) planUi.draft = saved ? JSON.parse(JSON.stringify(saved)) : blankPlan(planUi.date);
+  const p = planUi.draft; p.leaders = p.leaders || []; p.leadTheme = p.leadTheme || ""; return p;
+}
+// 장 끝난 뒤 복기하는 탭이라 기본은 '가장 최근 장 마감일'
+function defaultLeadDate() { const kst = new Date(Date.now() + 9 * 3600e3), t = kst.toISOString().slice(0, 10), wd = kst.getUTCDay(); return wd !== 0 && wd !== 6 && kst.getUTCHours() * 60 + kst.getUTCMinutes() >= 15 * 60 + 30 ? t : lastWeekdayBefore(t); }
+function renderLead(soft) {
+  const box = $("#view-lead"); if (!box) return;
+  if (soft && box.contains(document.activeElement) && document.activeElement.matches("input,textarea")) return;
+  if (!box.dataset.init) { box.dataset.init = "1"; if (!planUi.draft) planUi.date = defaultLeadDate(); }
+  const p = ensurePlanDraft(), date = p.date, saved = planOf(date), wd = "일월화수목금토"[new Date(date + "T00:00:00").getDay()];
+  const tr = planTrades(date), m = state.market.get(date), L = usLine(date, "");
+  const recent = [...state.plans].filter(x => (x.leaders || []).length).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 14);
+  const mk = k => m?.[k] ? `<span>${k === "kospi" ? "코스피" : "코스닥"} <b class="num ${cls(m[k].chgPct)}">${m[k].chgPct == null ? "–" : spct(m[k].chgPct / 100)}</b>${m[k].value ? ` <small class="muted">${Math.round(m[k].value / 1e5).toLocaleString("ko-KR")}억</small>` : ""}</span>` : "";
+  const planNames = (p.stocks || []).map(s => s.name);
+  box.innerHTML = `
+    ${state.plansMissing ? `<div class="notice warn">Supabase에 plans 표가 아직 없어서 저장할 수 없어요. setup.sql 맨 아래 '매매 시나리오' 부분을 SQL Editor에서 실행해 주세요.</div>` : ""}
+    <div class="section-head"><h2 class="grow">주도주 복기</h2><span class="muted plan-state" id="lead-state">${saved ? "저장됨" : "아직 안 씀"}</span></div>
+    <div class="plan-nav">
+      <button class="btn sm" type="button" data-ld="-1" aria-label="이전 장">◀</button>
+      <input class="inp" type="date" id="lead-date" value="${esc(date)}" style="width:auto"><b>${esc(wd)}요일</b>
+      <button class="btn sm" type="button" data-ld="1" aria-label="다음 장">▶</button>
+      <button class="btn sm" type="button" id="lead-today">최근 장</button>
+    </div>
+    ${recent.length ? `<div class="sec-tabs">${recent.map(x => `<button type="button" data-lgo="${esc(x.date)}" aria-pressed="${x.date === date}">${esc(x.date.slice(5))}<small>${esc(x.leaders.map(l => l.name).slice(0, 2).join("·"))}${x.leaders.length > 2 ? " 외" : ""}</small></button>`).join("")}</div>` : ""}
+    <div class="card plan-ref"><div><small>그날 시장</small>${mk("kospi")}${mk("kosdaq")}${m ? "" : `<span class="muted">데이터 없음</span>`}</div><div><small>전날 미국장 ${L ? `(${esc(L.ud.slice(5))})` : ""}</small>${L ? L.idx.map(x => `<span>${esc(x.label)} <b class="num ${cls(x.pct)}">${x.pct == null ? "–" : spct(x.pct / 100)}</b></span>`).join("") : `<span class="muted">없음</span>`}</div>
+      ${tr.length ? `<div><small>내 매매</small>${tr.map(t => `<span class="chip ${t.missed ? "" : t.c ? (t.c.pnl > 0 ? "type" : "mis") : ""}" data-open="${esc(t.id)}" style="cursor:pointer">${esc(t.name)}${t.missed ? " (놓침)" : t.c ? " " + signed(t.c.pnl) : ""}</span>`).join("")}</div>` : ""}</div>
+    <section class="card plan-sec" style="margin-top:12px"><label class="f"><span>오늘 시장을 한 줄로 · 돈이 어디로 몰렸나</span><input class="inp" data-lf="leadTheme" value="${esc(p.leadTheme)}" placeholder="예: 로봇 테마에 거래대금 집중, 반도체는 미장 급락으로 약세"></label></section>
+    <div id="lead-list">${p.leaders.map((s, i) => leadCard(s, i, tr, planNames, date)).join("")}</div>
+    <div class="card plan-sec lead-add"><div class="sec-add"><input class="inp" id="lead-add-in" placeholder="주도주 종목명 넣기 · 쉼표로 여러 개" list="lead-names" autocomplete="off"><button class="btn primary" type="button" id="lead-add">넣기</button></div>
+      <datalist id="lead-names">${[...new Set([...tradedNames(), ...state.sectors.flatMap(s => s.stocks.map(x => x.name))])].map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+      <p class="muted" style="margin:0;font-size:12.5px">거래대금 상위·상한가·테마 대장 중 그날 시장을 끌고 간 종목 1~3개면 충분해요. 차트는 종목 카드를 한 번 누른 뒤 Ctrl+V.</p></div>`;
+  fillImages(box); autosizeAll(box);
+  const go = d => { flushPlan(); planUi.date = d; planUi.draft = null; leadUi.focus = -1; renderLead(); };
+  box.querySelectorAll("[data-ld]").forEach(b => b.onclick = () => { const d = new Date(date + "T00:00:00"); do d.setDate(d.getDate() + +b.dataset.ld); while (d.getDay() === 0 || d.getDay() === 6); go(wkYmd(d)); });
+  $("#lead-date").onchange = e => e.target.value && go(e.target.value);
+  $("#lead-today").onclick = () => go(defaultLeadDate());
+  box.querySelectorAll("[data-lgo]").forEach(b => b.onclick = () => go(b.dataset.lgo));
+  box.querySelectorAll("[data-lf]").forEach(el => el.oninput = () => { p[el.dataset.lf] = el.value; queuePlan(); });
+  box.querySelectorAll("[data-lsf]").forEach(el => el.oninput = () => { const [i, k] = el.dataset.lsf.split("|"); p.leaders[+i][k] = el.value; if (el.tagName === "TEXTAREA") autosize(el); queuePlan(); });
+  box.querySelectorAll(".lead-card").forEach(c => c.addEventListener("focusin", () => { leadUi.focus = +c.dataset.li; box.querySelectorAll(".lead-card").forEach(x => x.classList.toggle("on", x === c)); }));
+  box.querySelectorAll(".lead-card").forEach(c => c.addEventListener("pointerdown", () => { leadUi.focus = +c.dataset.li; box.querySelectorAll(".lead-card").forEach(x => x.classList.toggle("on", x === c)); }));
+  box.querySelectorAll("[data-lrm]").forEach(b => b.onclick = async () => { const s = p.leaders[+b.dataset.lrm]; if ((s.photos || []).length || LEAD_FIELDS.some(([k]) => (s[k] || "").trim())) { if (!await confirmBox("주도주 빼기", `'${s.name}' 복기를 지울까요?`)) return; }
+    p.leaders.splice(+b.dataset.lrm, 1); queuePlan(true); try { if ((s.photos || []).length) await api.removeImages(s.photos.map(x => x.asset)); } catch {} renderLead(); });
+  box.querySelectorAll("[data-lup]").forEach(b => b.onclick = () => { const i = +b.dataset.lup; if (i > 0) { [p.leaders[i - 1], p.leaders[i]] = [p.leaders[i], p.leaders[i - 1]]; queuePlan(true); renderLead(); } });
+  box.querySelectorAll("[data-lpick]").forEach(b => b.onclick = () => { leadUi.focus = +b.dataset.lpick; $("#lead-file").click(); });
+  box.querySelectorAll("[data-lphrm]").forEach(b => b.onclick = async () => { const [i, j] = b.dataset.lphrm.split("|").map(Number); const ph = p.leaders[i].photos.splice(j, 1)[0]; await flushPlan(true); try { await api.removeImages([ph.asset]); } catch {} renderLead(); });
+  box.querySelectorAll("[data-lphnote]").forEach(el => el.oninput = () => { const [i, j] = el.dataset.lphnote.split("|").map(Number); p.leaders[i].photos[j].note = el.value; queuePlan(); });
+  box.querySelectorAll("[data-lzoom]").forEach(img => img.onclick = () => { const [i, j] = img.dataset.lzoom.split("|").map(Number); const s = p.leaders[i]; lightbox(s.photos.map(x => ({ asset: x.asset, title: `${date} ${s.name}`, note: x.note || "", marks: [] })), j); });
+  box.querySelectorAll("[data-lmiss]").forEach(b => b.onclick = () => { const s = p.leaders[+b.dataset.lmiss]; openTrade(null, { missed: true, preset: { date, name: s.name, reason: s.spot || "" } }); });
+  box.querySelectorAll("[data-memo]").forEach(el => el.onclick = () => editStockMemo(el, el.dataset.memo, () => renderLead()));
+  if (!$("#lead-file")) { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.multiple = true; f.hidden = true; f.id = "lead-file"; document.body.appendChild(f); f.onchange = e => { leadFiles([...e.target.files]); e.target.value = ""; }; }
+  const ai = $("#lead-add-in"), add = () => { const ns = ai.value.split(/[,\n]+/).map(x => x.trim()).filter(Boolean).filter(n => !p.leaders.some(s => s.name === n)); if (!ns.length) { toast(ai.value.trim() ? "이미 들어 있는 종목이에요" : "종목명을 적어 주세요"); return; }
+    ns.forEach(n => p.leaders.push({ name: n, theme: "", chg: "", value: "", why: "", spot: "", learn: "", photos: [] })); leadUi.focus = p.leaders.length - 1; queuePlan(true); renderLead(); setTimeout(() => { const el = document.querySelector(`[data-lsf="${p.leaders.length - ns.length}|theme"]`); el && el.focus(); }, 30); };
+  $("#lead-add").onclick = add; ai.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); add(); } };
+}
+function leadCard(s, i, tr, planNames, date) {
+  const mine = tr.filter(t => t.name === s.name), memo = stockMemo(s.name);
+  return `<div class="card lead-card${leadUi.focus === i ? " on" : ""}" data-li="${i}">
+    <div class="plan-stock-h"><b>${esc(s.name)}</b>${kindChip(s.name)}${sectorsOf(s.name).map(x => `<span class="chip">${esc(x.name)}</span>`).join("")}
+      ${planNames.includes(s.name) ? `<span class="chip type">시나리오에 있었음</span>` : ""}
+      ${mine.length ? mine.map(t => `<span class="chip ${t.missed ? "" : t.c ? (t.c.pnl > 0 ? "type" : "mis") : ""}" data-open="${esc(t.id)}" style="cursor:pointer">${t.missed ? "놓친 종목 기록" : "내 매매 " + (t.c ? signed(t.c.pnl) : "")}</span>`).join("") : `<button type="button" class="btn sm" data-lmiss="${i}" title="매매 안 했으면 놓친 종목으로 남기기">놓친 종목으로 기록</button>`}
+      <span class="grow"></span>${i > 0 ? `<button type="button" class="x" data-lup="${i}" aria-label="위로">↑</button>` : ""}<button type="button" class="x" data-lrm="${i}">빼기</button></div>
+    ${memo ? `<div class="memo" data-memo="${esc(s.name)}" tabindex="0" role="button" title="종목 메모 (눌러서 고치기)">${esc(memo)}</div>` : ""}
+    <div class="lead-meta"><label class="f"><span>테마</span><input class="inp" data-lsf="${i}|theme" value="${esc(s.theme || "")}" placeholder="예: 로봇"></label>
+      <label class="f"><span>등락률 %</span><input class="inp num" data-lsf="${i}|chg" value="${esc(s.chg || "")}" placeholder="+29.9" inputmode="decimal"></label>
+      <label class="f"><span>거래대금 (억)</span><input class="inp num" data-lsf="${i}|value" value="${esc(s.value || "")}" placeholder="4,500" inputmode="numeric"></label></div>
+    <div class="lead-txt">${LEAD_FIELDS.map(([k, l, ph]) => `<label class="f lt-${k}"><span>${l}</span><textarea class="inp" rows="2" data-lsf="${i}|${k}" placeholder="${esc(ph)}">${esc(s[k] || "")}</textarea></label>`).join("")}</div>
+    <div class="lead-ph">${(s.photos || []).map((ph, j) => `<figure><img data-path="${esc(ph.asset)}" alt="${esc(ph.note || s.name + " 차트")}" data-lzoom="${i}|${j}"><figcaption><input class="inp" data-lphnote="${i}|${j}" value="${esc(ph.note || "")}" placeholder="이 차트에서 볼 자리"><button type="button" class="btn sm danger" data-lphrm="${i}|${j}">빼기</button></figcaption></figure>`).join("")}
+      <button type="button" class="lead-ph-add" data-lpick="${i}">＋ 차트 (이 카드를 누른 뒤 Ctrl+V 또는 여기를 눌러 고르기)</button></div>
+    ${newsLinks(date, s.name, "")}
+  </div>`;
+}
+async function leadFiles(files) {
+  const p = planUi.draft, i = leadUi.focus; if (!files.length || !p || !p.leaders?.[i]) { if (files.length) toast("차트를 붙일 종목 카드를 먼저 눌러 주세요"); return; }
+  toast(`사진 올리는 중… (${files.length})`); const s = p.leaders[i]; s.photos = s.photos || [];
+  for (const f of files) {
+    try { const blob = await shrink(f); let type = blob.type || f.type; if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(type)) type = "image/png"; s.photos.push({ asset: await api.upload(blob, type), note: "" }); }
+    catch { toast("사진을 올리지 못했어요. 다시 시도해 주세요"); }
+  }
+  await flushPlan(true); if (location.hash === "#lead" && planUi.draft === p) renderLead();
+}
+document.addEventListener("paste", e => {
+  if (sheet || !session || location.hash !== "#lead" || document.querySelector(".modal-wrap")) return;
+  const files = [...(e.clipboardData?.items || [])].filter(i => i.kind === "file" && i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean);
+  if (files.length) { e.preventDefault(); leadFiles(files); }
+});
+window.addEventListener("hashchange", () => { if (location.hash !== "#lead") flushPlan(); });
+
 /* ---------- 렌더: 섹터 ---------- */
 const secUi = { sel: (() => { try { return localStorage.getItem("tj-sector") || ""; } catch { return ""; } })(), sub: "news", stock: "", q: "", more: false };
 const liveCache = new Map(); // 종목명 → { data, at }
@@ -2401,7 +2508,7 @@ const planOf = date => state.plans.find(p => p.date === date) || null;
 const kstToday = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
 function nextWeekday(date) { const d = new Date(date + "T00:00:00"); do d.setDate(d.getDate() + 1); while (d.getDay() === 0 || d.getDay() === 6); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 function defaultPlanDate() { const kst = new Date(Date.now() + 9 * 3600e3), t = kstToday(), wd = kst.getUTCDay(); return (wd === 0 || wd === 6 || kst.getUTCHours() >= 16) ? nextWeekday(t) : t; }
-function blankPlan(date) { return { id: crypto.randomUUID(), date, market: "", good: "", bad: "", rules: "", maxLoss: null, maxTrades: null, stocks: [], photos: [], score: "", after: "", createdAt: Date.now(), updatedAt: Date.now() }; }
+function blankPlan(date) { return { id: crypto.randomUUID(), date, market: "", good: "", bad: "", rules: "", maxLoss: null, maxTrades: null, stocks: [], photos: [], score: "", after: "", leaders: [], leadTheme: "", createdAt: Date.now(), updatedAt: Date.now() }; }
 function renderPlanView(soft) {
   const box = $("#view-plan"); if (!box) return;
   if (!box.dataset.built) {
@@ -2519,20 +2626,20 @@ function planStockCard(s, i, tr) {
     <div class="plan-stock-g">${PLAN_STOCK_FIELDS.filter(([k]) => PLAN_STOCK_MAIN.includes(k) || (s[k] || "").trim()).map(([k, l, ph]) => `<label class="f"><span>${l}</span><textarea class="inp" rows="1" data-psf="${i}|${k}" placeholder="${esc(ph)}">${esc(s[k] || "")}</textarea></label>`).join("")}</div></div>`;
 }
 function queuePlan(now) {
-  const st = $("#plan-state"); if (st) st.textContent = "저장 중…";
+  const st = { set textContent(v) { ["#plan-state", "#lead-state"].forEach(q => { const e = $(q); if (e) e.textContent = v; }); } }; if (st) st.textContent = "저장 중…";
   clearTimeout(planUi.timer); planUi.timer = setTimeout(() => flushPlan(), now ? 50 : 900);
 }
 async function flushPlan(force) {
   clearTimeout(planUi.timer); planUi.timer = null;
   const p = planUi.draft; if (!p || !session) return;
   const saved = planOf(p.date);
-  const empty = !p.market.trim() && !p.good.trim() && !p.bad.trim() && !p.rules.trim() && !p.after.trim() && !p.stocks.length && !p.photos.length && !p.score && p.maxLoss == null && p.maxTrades == null;
-  if (!saved && empty) { const st = $("#plan-state"); if (st) st.textContent = "아직 안 씀"; return; }
-  if (!force && saved && JSON.stringify({ ...saved, updatedAt: 0 }) === JSON.stringify({ ...p, updatedAt: 0 })) { const st = $("#plan-state"); if (st) st.textContent = "저장됨"; return; }
+  const empty = !p.market.trim() && !p.good.trim() && !p.bad.trim() && !p.rules.trim() && !p.after.trim() && !p.stocks.length && !p.photos.length && !p.score && p.maxLoss == null && p.maxTrades == null && !(p.leaders || []).length && !(p.leadTheme || "").trim();
+  if (!saved && empty) { const st = { set textContent(v) { ["#plan-state", "#lead-state"].forEach(q => { const e = $(q); if (e) e.textContent = v; }); } }; if (st) st.textContent = "아직 안 씀"; return; }
+  if (!force && saved && JSON.stringify({ ...saved, updatedAt: 0 }) === JSON.stringify({ ...p, updatedAt: 0 })) { const st = { set textContent(v) { ["#plan-state", "#lead-state"].forEach(q => { const e = $(q); if (e) e.textContent = v; }); } }; if (st) st.textContent = "저장됨"; return; }
   p.updatedAt = Date.now(); const doc = JSON.parse(JSON.stringify(p)); delete doc.id;
   try { await api.savePlan(p.id, doc); const i = state.plans.findIndex(x => x.id === p.id); if (i >= 0) state.plans[i] = JSON.parse(JSON.stringify(p)); else state.plans.push(JSON.parse(JSON.stringify(p)));
-    const st = $("#plan-state"); if (st && planUi.draft === p) st.textContent = "저장됨 " + new Date().toTimeString().slice(0, 5); }
-  catch (err) { const st = $("#plan-state"); if (st) st.textContent = "저장 안 됨"; toast(/plans/.test(errMsg(err)) || /relation|exist|find/i.test(err?.message || "") ? "Supabase에 plans 표를 먼저 만들어 주세요 (setup.sql 맨 아래)" : errMsg(err)); }
+    const st = { set textContent(v) { ["#plan-state", "#lead-state"].forEach(q => { const e = $(q); if (e) e.textContent = v; }); } }; if (st && planUi.draft === p) st.textContent = "저장됨 " + new Date().toTimeString().slice(0, 5); }
+  catch (err) { const st = { set textContent(v) { ["#plan-state", "#lead-state"].forEach(q => { const e = $(q); if (e) e.textContent = v; }); } }; if (st) st.textContent = "저장 안 됨"; toast(/plans/.test(errMsg(err)) || /relation|exist|find/i.test(err?.message || "") ? "Supabase에 plans 표를 먼저 만들어 주세요 (setup.sql 맨 아래)" : errMsg(err)); }
 }
 async function planFiles(files) {
   const p = planUi.draft; if (!files.length || !p) return;
@@ -2830,7 +2937,7 @@ window.addEventListener("resize", () => { if (sheet) autosizeAll(document.queryS
 function openTrade(id, opts = {}) {
   const base = id ? state.trades.find(t => t.id === id) : null;
   if (id && !base) { toast("이 매매를 찾을 수 없어요"); return; }
-  const draft = base ? JSON.parse(JSON.stringify(base)) : { date: todayStr(), name: "", type: "", mood: "", reason: "", buy: null, sell: null, qty: null, stop: null, stopKept: "", mistakes: [], memo: "", lesson: "", photos: [], ...(opts.missed ? { missed: true, missReasons: [] } : {}) };
+  const draft = base ? JSON.parse(JSON.stringify(base)) : { date: todayStr(), name: "", type: "", mood: "", reason: "", buy: null, sell: null, qty: null, stop: null, stopKept: "", mistakes: [], memo: "", lesson: "", photos: [], ...(opts.missed ? { missed: true, missReasons: [] } : {}), ...(opts.preset || {}) };
   const M = !!draft.missed; if (M) draft.missReasons = draft.missReasons || [];
   draft.grade = draft.grade ? String(draft.grade) : "";
   const tid = base ? base.id : crypto.randomUUID();
@@ -3244,7 +3351,7 @@ function render() {
   const n = state.trades.filter(t => !t.missed).length, nm = state.trades.length - n;
   $("#countLabel").textContent = state.loaded ? `매매 ${n}건 기록됨${nm ? ` · 놓친 종목 ${nm}건` : ""}` : "기록을 불러오는 중";
   const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "log";
-  if (v === "log") renderLog(); if (v === "stats") renderStats(); if (v === "notes") renderNotes(); if (v === "sectors") renderSectors(); if (v === "plan") renderPlanView(true); if (v === "week") renderWeek(true); if (v === "memo") renderMemo(true); if (v === "setup") renderSetup();
+  if (v === "log") renderLog(); if (v === "stats") renderStats(); if (v === "notes") renderNotes(); if (v === "sectors") renderSectors(); if (v === "plan") renderPlanView(true); if (v === "lead") renderLead(true); if (v === "week") renderWeek(true); if (v === "memo") renderMemo(true); if (v === "setup") renderSetup();
 }
 
 /* ---------- 로그인 · 데이터 연결 ---------- */
