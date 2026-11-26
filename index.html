@@ -270,8 +270,8 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .memo-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
 .memo-item{all:unset;box-sizing:border-box;cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 14px 12px;display:flex;flex-direction:column;gap:6px;min-width:0;height:168px;overflow:hidden;transition:box-shadow .12s,border-color .12s}
 .memo-item:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(0,0,0,.06)}.memo-item:focus-visible{outline:2px solid var(--accent)}
-.memo-item b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.memo-pv{font-size:13px;line-height:1.55;color:var(--muted);white-space:pre-wrap;overflow:hidden;max-height:calc(1.55em * 5)}
+.memo-item b{flex-shrink:0;font-size:15px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.memo-pv{flex-shrink:0;font-size:13px;line-height:1.55;color:var(--muted);white-space:pre-wrap;overflow:hidden;max-height:calc(1.55em * 4)}
 .memo-item em{margin-top:auto;font-style:normal;font-size:11.5px;color:var(--faint)}
 .memo-wrap.has-sel .memo-side{display:none}.memo-wrap:not(.has-sel) .memo-main{display:none}
 .memo-main{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 22px 22px;min-width:0;min-height:60vh;max-width:860px;margin:0 auto}
@@ -280,7 +280,7 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .memo-title::placeholder{color:var(--faint,var(--muted))}
 .memo-meta{font-size:12px;margin-bottom:10px}
 .memo-body{all:unset;box-sizing:border-box;width:100%;display:block;font-size:15.5px;line-height:1.75;white-space:pre-wrap;color:var(--fg);resize:none;min-height:55vh}
-@media (max-width:559px){.memo-items{grid-template-columns:1fr 1fr;gap:8px}.memo-item{height:140px;padding:11px}.memo-pv{max-height:calc(1.55em * 4)}.memo-side-h .inp{width:100%;order:3}.memo-main{padding:12px 14px 18px}}
+@media (max-width:559px){.memo-items{grid-template-columns:1fr 1fr;gap:8px}.memo-item{height:140px;padding:11px}.memo-pv{max-height:calc(1.55em * 3)}.memo-side-h .inp{width:100%;order:3}.memo-main{padding:12px 14px 18px}}
 .plan-nav{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.plan-nav .grow{flex:1}.plan-state{font-size:12.5px}
 .plan-cols{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px;align-items:start}
 @media (max-width:999px){.plan-cols{grid-template-columns:1fr}}
