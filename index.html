@@ -285,9 +285,9 @@ textarea.inp{resize:vertical;min-height:64px;line-height:1.5}
 .lead-card .x{border:0;background:none;color:var(--muted);cursor:pointer;font-size:12px;padding:2px 4px}
 .lead-card .memo{font-size:12.5px;color:var(--muted);background:var(--surface-2);border-radius:8px;padding:6px 8px;cursor:pointer;white-space:pre-wrap}
 .lead-meta{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:8px}
-.lead-ph{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
-.lead-ph figure{margin:0;display:flex;flex-direction:column;gap:6px}.lead-ph img{width:100%;border-radius:8px;border:1px solid var(--line);cursor:zoom-in;background:var(--surface-2);min-height:80px;object-fit:contain}.lead-ph figcaption{display:flex;gap:6px}
-.lead-ph-add{all:unset;box-sizing:border-box;cursor:pointer;border:1.5px dashed var(--line);border-radius:10px;padding:14px;text-align:center;font-size:12.5px;color:var(--muted);min-height:64px;display:grid;place-items:center}.lead-ph-add:hover{border-color:var(--accent);color:var(--accent)}
+.lead-ph{display:flex;flex-direction:column;gap:12px}
+.lead-ph .photo textarea{min-height:90px}
+.lead-ph-add{all:unset;box-sizing:border-box;cursor:pointer;border:1.5px dashed var(--line);border-radius:10px;padding:14px;text-align:center;font-size:12.5px;color:var(--muted);min-height:56px;display:grid;place-items:center}.lead-ph-add:hover{border-color:var(--accent);color:var(--accent)}
 .lead-add{margin-top:12px}
 .lead-txt{display:grid;grid-template-columns:1fr 1fr;gap:8px}.lead-txt .lt-learn{grid-column:1/-1}@media (max-width:700px){.lead-txt{grid-template-columns:1fr}}
 @media (max-width:560px){.lead-meta{grid-template-columns:1fr 1fr}.lead-meta .f:first-child{grid-column:1/-1}}
@@ -2010,9 +2010,18 @@ function renderLead(soft) {
     p.leaders.splice(+b.dataset.lrm, 1); queuePlan(true); try { if ((s.photos || []).length) await api.removeImages(s.photos.map(x => x.asset)); } catch {} renderLead(); });
   box.querySelectorAll("[data-lup]").forEach(b => b.onclick = () => { const i = +b.dataset.lup; if (i > 0) { [p.leaders[i - 1], p.leaders[i]] = [p.leaders[i], p.leaders[i - 1]]; queuePlan(true); renderLead(); } });
   box.querySelectorAll("[data-lpick]").forEach(b => b.onclick = () => { leadUi.focus = +b.dataset.lpick; $("#lead-file").click(); });
-  box.querySelectorAll("[data-lphrm]").forEach(b => b.onclick = async () => { const [i, j] = b.dataset.lphrm.split("|").map(Number); const ph = p.leaders[i].photos.splice(j, 1)[0]; await flushPlan(true); try { await api.removeImages([ph.asset]); } catch {} renderLead(); });
-  box.querySelectorAll("[data-lphnote]").forEach(el => el.oninput = () => { const [i, j] = el.dataset.lphnote.split("|").map(Number); p.leaders[i].photos[j].note = el.value; queuePlan(); });
-  box.querySelectorAll("[data-lzoom]").forEach(img => img.onclick = () => { const [i, j] = img.dataset.lzoom.split("|").map(Number); const s = p.leaders[i]; lightbox(s.photos.map(x => ({ asset: x.asset, title: `${date} ${s.name}`, note: x.note || "", marks: [] })), j); });
+  box.querySelectorAll("[data-lphnote]").forEach(el => el.oninput = () => { const [i, j] = el.dataset.lphnote.split("|").map(Number); p.leaders[i].photos[j].note = el.value; autosize(el); queuePlan(); });
+  box.querySelectorAll("[data-lphtitle]").forEach(el => el.oninput = () => { const [i, j] = el.dataset.lphtitle.split("|").map(Number); p.leaders[i].photos[j].title = el.value; queuePlan(); });
+  box.querySelectorAll("article.photo[data-lp]").forEach(a => { const [i, j] = a.dataset.lp.split("|").map(Number), ph = p.leaders[i].photos[j]; ph.marks = ph.marks || []; bindMarks(a.querySelector("img"), a.querySelector("svg.mk"), ph.marks); });
+  box.querySelectorAll("[data-lpact]").forEach(b => b.onclick = async () => {
+    const [i, j] = b.closest("[data-lp]").dataset.lp.split("|").map(Number), s = p.leaders[i], arr = s.photos, act = b.dataset.lpact;
+    if (act === "zoom") return lightbox(arr.map(x => ({ ...x, title: x.title || `${date} ${s.name}`, marks: x.marks || [] })), j);
+    if (act === "draw") return drawEditor(arr[j], () => { queuePlan(true); renderLead(); });
+    if (act === "up" && j > 0) [arr[j - 1], arr[j]] = [arr[j], arr[j - 1]];
+    if (act === "down" && j < arr.length - 1) [arr[j + 1], arr[j]] = [arr[j], arr[j + 1]];
+    if (act === "rm") { if (!await confirmBox("사진 삭제", "이 사진과 설명을 지울까요?")) return; const [ph] = arr.splice(j, 1); await flushPlan(true); try { await api.removeImages([ph.asset]); } catch {} }
+    queuePlan(true); renderLead();
+  });
   box.querySelectorAll("[data-lmiss]").forEach(b => b.onclick = () => { const s = p.leaders[+b.dataset.lmiss]; openTrade(null, { missed: true, preset: { date, name: s.name, reason: s.why || "" } }); });
   box.querySelectorAll("[data-memo]").forEach(el => el.onclick = () => editStockMemo(el, el.dataset.memo, () => renderLead()));
   if (!$("#lead-file")) { const f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.multiple = true; f.hidden = true; f.id = "lead-file"; document.body.appendChild(f); f.onchange = e => { leadFiles([...e.target.files]); e.target.value = ""; }; }
@@ -2029,8 +2038,17 @@ function leadCard(s, i, tr, planNames, date) {
       <span class="grow"></span>${i > 0 ? `<button type="button" class="x" data-lup="${i}" aria-label="위로">↑</button>` : ""}<button type="button" class="x" data-lrm="${i}">빼기</button></div>
     ${memo ? `<div class="memo" data-memo="${esc(s.name)}" tabindex="0" role="button" title="종목 메모 (눌러서 고치기)">${esc(memo)}</div>` : ""}
     <label class="f"><span>왜 주도주였나</span><textarea class="inp" rows="3" data-lsf="${i}|why" placeholder="재료·테마, 거래대금이 어떻게 몰렸나, 대장인지 후속주인지">${esc(s.why || "")}</textarea></label>
-    <div class="lead-ph">${(s.photos || []).map((ph, j) => `<figure><img data-path="${esc(ph.asset)}" alt="${esc(ph.note || s.name + " 차트")}" data-lzoom="${i}|${j}"><figcaption><input class="inp" data-lphnote="${i}|${j}" value="${esc(ph.note || "")}" placeholder="이 차트에서 볼 자리"><button type="button" class="btn sm danger" data-lphrm="${i}|${j}">빼기</button></figcaption></figure>`).join("")}
-      <button type="button" class="lead-ph-add" data-lpick="${i}">＋ 차트 (이 카드를 누른 뒤 Ctrl+V 또는 여기를 눌러 고르기)</button></div>
+    <div class="lead-ph">${(s.photos || []).map((ph, j, arr) => `<article class="photo" data-lp="${i}|${j}">
+        <div class="photo-head"><span class="idx">${String(j + 1).padStart(2, "0")}</span>
+          <input value="${esc(ph.title || "")}" data-lphtitle="${i}|${j}" placeholder="사진 제목 (예: 1분봉, 일봉)" aria-label="사진 ${j + 1} 제목">
+          <button class="icon-btn" type="button" data-lpact="up" ${j === 0 ? "disabled" : ""} aria-label="위로">↑</button>
+          <button class="icon-btn" type="button" data-lpact="down" ${j === arr.length - 1 ? "disabled" : ""} aria-label="아래로">↓</button>
+          <button class="icon-btn" type="button" data-lpact="draw">✎ 그리기</button>
+          <button class="icon-btn" type="button" data-lpact="rm">삭제</button></div>
+        <button class="photo-img" type="button" data-lpact="zoom"><span class="mk-wrap"><img data-path="${esc(ph.asset)}" alt="${esc(ph.title || s.name + " 차트")}"><svg class="mk" aria-hidden="true"></svg></span></button>
+        <textarea class="inp" data-lphnote="${i}|${j}" placeholder="이 차트에서 본 것">${esc(ph.note || "")}</textarea>
+      </article>`).join("")}
+      <button type="button" class="lead-ph-add" data-lpick="${i}">＋ 차트 넣기 · 이 카드를 누른 뒤 Ctrl+V 또는 여기를 눌러 고르기</button></div>
     <label class="f"><span>배운 점</span><textarea class="inp" rows="2" data-lsf="${i}|learn" placeholder="다음에 비슷한 날 무엇을 볼지">${esc(s.learn || "")}</textarea></label>
     ${newsLinks(date, s.name, "")}
   </div>`;
@@ -2039,7 +2057,7 @@ async function leadFiles(files) {
   const p = planUi.draft, i = leadUi.focus; if (!files.length || !p || !p.leaders?.[i]) { if (files.length) toast("차트를 붙일 종목 카드를 먼저 눌러 주세요"); return; }
   toast(`사진 올리는 중… (${files.length})`); const s = p.leaders[i]; s.photos = s.photos || [];
   for (const f of files) {
-    try { const blob = await shrink(f); let type = blob.type || f.type; if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(type)) type = "image/png"; s.photos.push({ asset: await api.upload(blob, type), note: "" }); }
+    try { const blob = await shrink(f); let type = blob.type || f.type; if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(type)) type = "image/png"; s.photos.push({ asset: await api.upload(blob, type), title: "", note: "", marks: [] }); }
     catch { toast("사진을 올리지 못했어요. 다시 시도해 주세요"); }
   }
   await flushPlan(true); if (location.hash === "#lead" && planUi.draft === p) renderLead();
